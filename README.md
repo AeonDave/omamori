@@ -15,7 +15,6 @@ A cross-platform protection library implementing advanced anti-debugging, anti-d
 - [API Reference](#api-reference)
 - [Build Instructions](#build-instructions)
 - [Testing](#testing)
-- [Integration Examples](#integration-examples)
 - [Performance](#performance)
 - [Security Considerations](#security-considerations)
 - [License](#license)
@@ -28,52 +27,13 @@ Omamori is a production-ready software protection library designed to defend app
 
 ### Protection Stack
 
-┌───────────────────────────────────────────────────────────────┐
-│                    OMAMORI PROTECTION STACK                   │
-├───────────────────────────────────────────────────────────────┤
-│  Layer 4: Memory Encryption                                   │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  Transparent memory encryption with on-demand decrypt    │ │
-│  │  • Stream cipher (XOR/ChaCha20)                          │ │
-│  │  • Page-level protection (PROT_NONE/PAGE_NOACCESS)       │ │
-│  │  • Automatic SIGSEGV/VEH handler                         │ │
-│  └──────────────────────────────────────────────────────────┘ │
-├───────────────────────────────────────────────────────────────┤
-│  Layer 3: Anti-Dump                                           │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  Runtime memory corruption & dump prevention             │ │
-│  │  • PE/ELF header erasure                                 │ │
-│  │  • Core dump disabling (setrlimit + prctl)               │ │
-│  │  • Continuous re-corruption thread                       │ │
-│  │  • PEB/LDR unlinking (Windows)                           │ │
-│  └──────────────────────────────────────────────────────────┘ │
-├───────────────────────────────────────────────────────────────┤
-│  Layer 2: Anti-Debug                                          │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  Multi-vector debugger detection & prevention            │ │
-│  │  • PEB/TEB inspection (50+ checks)                       │ │
-│  │  • Hardware breakpoint detection                         │ │
-│  │  • Timing attacks (RDTSC, sleep)                         │ │
-│  │  • ptrace self-attach (Linux)                            │ │
-│  │  • Framework detection (GDB, LLDB, OllyDbg, x64dbg)      │ │
-│  └──────────────────────────────────────────────────────────┘ │
-├───────────────────────────────────────────────────────────────┤
-│  Layer 1: Anti-Virtualization                                 │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  VM & container detection                                │ │
-│  │  • CPUID hypervisor bit                                  │ │
-│  │  • DMI/SMBIOS fingerprinting                             │ │
-│  │  • Container detection (cgroup, /.dockerenv)             │ │
-│  │  • VM artifacts (VMware tools, VBox drivers)             │ │
-│  └──────────────────────────────────────────────────────────┘ │
-├───────────────────────────────────────────────────────────────┤
-│  Base: System Integration                                     │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  • Direct syscalls (Windows)                             │ │
-│  │  • Secure string encryption (compile-time XOR)           │ │
-│  │  • Cross-platform abstraction layer                      │ │
-│  └──────────────────────────────────────────────────────────┘ │
-└───────────────────────────────────────────────────────────────┘
+| Layer | Component | Key features |
+|---:|:---|:---|
+| Layer 4 | Memory Encryption | Transparent on-demand encryption; Stream cipher (XOR / ChaCha20); Page-level protection (PROT_NONE / PAGE_NOACCESS); Automatic SIGSEGV / VEH handler |
+| Layer 3 | Anti-Dump | Runtime memory corruption & dump prevention; PE / ELF header erasure; Core dump disabling (setrlimit + prctl); Continuous re-corruption thread; PEB / LDR unlinking (Windows) |
+| Layer 2 | Anti-Debug | Multi-vector debugger detection & prevention; PEB / TEB inspection (50+ checks); Hardware breakpoint detection (DR0-DR7); Timing attacks (RDTSC / QPC); ptrace self-attach (Linux); Framework detection (GDB, Frida, LLDB, x64dbg) |
+| Layer 1 | Anti-Virtualization | VM & container detection; CPUID hypervisor bit; DMI / SMBIOS fingerprinting; MAC address fingerprinting; Container checks (cgroup, /.dockerenv); VM artifacts (VMware, VirtualBox, Hyper-V) |
+| Base | System Integration | Direct syscalls (Windows); Compile-time secure string encryption (XOR); Cross-platform abstraction layer |
 
 ---
 
