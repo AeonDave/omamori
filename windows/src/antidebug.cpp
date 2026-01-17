@@ -9,12 +9,12 @@ namespace AntiDebug {
 
 // PEB-based checks
 bool Detector::CheckPEBBeingDebugged() {
-    PEB* peb = Internal::READ_PEB();
+    auto peb = Internal::ReadPEB();
     return peb->BeingDebugged != 0;
 }
 
 bool Detector::CheckPEBNtGlobalFlag() {
-    PEB* peb = Internal::READ_PEB();
+    auto peb = Internal::ReadPEB();
 #ifdef _WIN64
     DWORD* pNtGlobalFlag = reinterpret_cast<DWORD*>(reinterpret_cast<BYTE*>(peb) + 0xBC);
 #else
@@ -24,7 +24,7 @@ bool Detector::CheckPEBNtGlobalFlag() {
 }
 
 bool Detector::CheckPEBHeapFlags() {
-    PEB* peb = Internal::READ_PEB();
+    auto peb = Internal::ReadPEB();
     PVOID heapBase = peb->ProcessHeap;
     
     if (!heapBase) return false;
@@ -43,7 +43,7 @@ bool Detector::CheckPEBHeapFlags() {
 // API-based checks
 bool Detector::CheckRemoteDebuggerPresent() {
     BOOL debuggerPresent = FALSE;
-    CheckRemoteDebuggerPresent(GetCurrentProcess(), &debuggerPresent);
+    ::CheckRemoteDebuggerPresent(GetCurrentProcess(), &debuggerPresent);
     return debuggerPresent != FALSE;
 }
 
@@ -159,6 +159,7 @@ bool Detector::CheckTimingQPC() {
 
 // Exception-based checks
 bool Detector::CheckCloseHandleException() {
+#ifdef _MSC_VER
     __try {
         CloseHandle(reinterpret_cast<HANDLE>(0xDEADBEEF));
         return false;
@@ -166,6 +167,9 @@ bool Detector::CheckCloseHandleException() {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return true; // Debugger catches exception
     }
+#else
+    return false;
+#endif
 }
 
 bool Detector::CheckOutputDebugString() {

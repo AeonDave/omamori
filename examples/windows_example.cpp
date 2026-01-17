@@ -27,10 +27,10 @@ int main() {
     if (Omamori::IsDebugged()) {
         std::cout << "[!] DEBUGGER DETECTED!" << std::endl;
         
-        MessageBoxA(nullptr, 
+        MessageBoxA(nullptr,
                    "Debugger detected! Application will terminate.",
                    "Omamori Protection", MB_ICONERROR);
-        
+
         Omamori::TerminateIfDebugged();
     } else {
         std::cout << "[+] No debugger detected" << std::endl;
@@ -86,7 +86,7 @@ int main() {
                "Try attaching a debugger, dumping memory, or using Process Hacker.\n"
                "The application will detect and terminate.",
                "Omamori Demo", MB_ICONINFORMATION);
-    
+
     // Use timing guard for sensitive operations
     {
         Omamori::AntiDebug::TimingGuard guard(100.0); // 100ms threshold

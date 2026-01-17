@@ -1,6 +1,34 @@
 #include "../include/antidump.hpp"
 #include "../include/internal.hpp"
-#include <winternl.h>
+#include <tlhelp32.h>
+#include <vector>
+
+// Define missing structure members for LDR
+typedef struct _MY_LDR_DATA_TABLE_ENTRY {
+    LIST_ENTRY InLoadOrderLinks;
+    LIST_ENTRY InMemoryOrderLinks;
+    LIST_ENTRY InInitializationOrderLinks;
+    PVOID DllBase;
+    PVOID EntryPoint;
+    ULONG SizeOfImage;
+    UNICODE_STRING FullDllName;
+    UNICODE_STRING BaseDllName;
+    ULONG Flags;
+    WORD LoadCount;
+    WORD TlsIndex;
+    union {
+        LIST_ENTRY HashLinks;
+        struct {
+            PVOID SectionPointer;
+            ULONG CheckSum;
+        };
+    };
+    union {
+        ULONG TimeDateStamp;
+        PVOID LoadedImports;
+    };
+    // ...
+} MY_LDR_DATA_TABLE_ENTRY, *PMY_LDR_DATA_TABLE_ENTRY;
 
 namespace Omamori {
 namespace Windows {
@@ -114,10 +142,10 @@ void PEProtector::CorruptImportDirectory() {
 }
 
 void PEProtector::ManipulatePEBModuleList() {
-    PEB* peb = Internal::READ_PEB();
-    
+    auto peb = Internal::ReadPEB();
+
     // Walk LDR data table
-    PPEB_LDR_DATA ldr = peb->Ldr;
+    PPEB_LDR_DATA ldr = static_cast<PPEB_LDR_DATA>(peb->Ldr);
     if (!ldr) return;
     
     // Find our module in InMemoryOrderModuleList
@@ -125,9 +153,9 @@ void PEProtector::ManipulatePEBModuleList() {
     PLIST_ENTRY current = head->Flink;
     
     while (current != head) {
-        PLDR_DATA_TABLE_ENTRY entry = CONTAINING_RECORD(
+        PMY_LDR_DATA_TABLE_ENTRY entry = CONTAINING_RECORD(
             current,
-            LDR_DATA_TABLE_ENTRY,
+            MY_LDR_DATA_TABLE_ENTRY,
             InMemoryOrderLinks
         );
         
@@ -143,17 +171,17 @@ void PEProtector::ManipulatePEBModuleList() {
 }
 
 void PEProtector::UnlinkFromLdrDataTable() {
-    PEB* peb = Internal::READ_PEB();
-    PPEB_LDR_DATA ldr = peb->Ldr;
+    auto peb = Internal::ReadPEB();
+    PPEB_LDR_DATA ldr = static_cast<PPEB_LDR_DATA>(peb->Ldr);
     if (!ldr) return;
     
     PLIST_ENTRY head = &ldr->InMemoryOrderModuleList;
     PLIST_ENTRY current = head->Flink;
     
     while (current != head) {
-        PLDR_DATA_TABLE_ENTRY entry = CONTAINING_RECORD(
+        PMY_LDR_DATA_TABLE_ENTRY entry = CONTAINING_RECORD(
             current,
-            LDR_DATA_TABLE_ENTRY,
+            MY_LDR_DATA_TABLE_ENTRY,
             InMemoryOrderLinks
         );
         

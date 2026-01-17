@@ -1,6 +1,11 @@
 #pragma once
 #include <windows.h>
+#include <winternl.h>
 #include <cstdint>
+
+#ifndef STATUS_NOT_IMPLEMENTED
+#define STATUS_NOT_IMPLEMENTED ((NTSTATUS)0xC0000002L)
+#endif
 
 namespace Omamori {
 namespace Windows {

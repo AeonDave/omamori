@@ -5,6 +5,7 @@
 #include <winreg.h>
 #include <iphlpapi.h>
 #include <tlhelp32.h>
+#include <cstdio>
 
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "advapi32.lib")
@@ -176,8 +177,8 @@ bool Detector::CheckDrivers() {
     
     for (int i = 0; vmDrivers[i] != nullptr; i++) {
         char path[MAX_PATH];
-        sprintf_s(path, "%s\\drivers\\%s", sysDir, vmDrivers[i]);
-        
+        snprintf(path, sizeof(path), "%s\\drivers\\%s", sysDir, vmDrivers[i]);
+
         if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
             return true;
         }
@@ -203,7 +204,7 @@ bool Detector::CheckVMware() {
     #endif
     
     // Check for VMware backdoor port
-    #if defined(_M_IX86)
+    #if defined(_M_IX86) && defined(_MSC_VER)
     __try {
         __asm {
             push edx

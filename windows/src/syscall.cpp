@@ -10,7 +10,7 @@ bool SyscallResolver::ResolveSyscallNumber(const char* functionName, SyscallInfo
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
     if (!ntdll) return false;
     
-    void* funcAddr = GetProcAddress(ntdll, functionName);
+    void* funcAddr = reinterpret_cast<void*>(GetProcAddress(ntdll, functionName));
     if (!funcAddr) return false;
     
     // Parse syscall number from function prologue
@@ -72,7 +72,7 @@ bool SyscallResolver::IsSyscallHooked(const char* ntFunction) {
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
     if (!ntdll) return true;
     
-    void* funcAddr = GetProcAddress(ntdll, ntFunction);
+    void* funcAddr = reinterpret_cast<void*>(GetProcAddress(ntdll, ntFunction));
     if (!funcAddr) return true;
     
     BYTE* code = static_cast<BYTE*>(funcAddr);

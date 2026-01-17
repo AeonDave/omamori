@@ -4,6 +4,8 @@ A cross-platform protection library implementing advanced anti-debugging, anti-d
 
 **Platform Support:** Windows | Linux | **Architecture:** x86 | x64 | **License:** MIT | **C++ Standard:** 17
 
+**Compilers:** MSVC (Visual Studio 2019+) | MinGW-w64 (GCC 10+) | GCC (Linux 10+) | Clang (12+)
+
 ---
 
 ## Table of Contents
@@ -147,17 +149,26 @@ make -j$(nproc)
 
 ### Windows Build
 
+The library is compatible with both **MSVC** and **MinGW-w64** compilers. Conditional compilation guards ensure full compatibility.
+
 ```bash
-# Using Visual Studio
+# Using Visual Studio (MSVC)
 mkdir build && cd build
 cmake .. -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 
-# Using MinGW
+# Using MinGW-w64 (GCC)
 mkdir build && cd build
 cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 mingw32-make
+
+# Manual compilation with MinGW (without CMake)
+g++ -std=c++17 -DOMAMORI_PLATFORM_WINDOWS -o your_app.exe your_app.cpp ^
+    windows/src/*.cpp -I include -I common/include -I windows/include ^
+    -lntdll -liphlpapi -lpsapi -lws2_32 -static
 ```
+
+> **Note:** Some advanced features (SEH exception-based detection, I/O port checks) are only available with MSVC. When compiled with MinGW, the library gracefully falls back to alternative detection methods, maintaining full protection coverage.
 
 ### Basic Usage
 

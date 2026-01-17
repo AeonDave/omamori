@@ -29,13 +29,13 @@ public:
     // CPU-based detection
     static bool CheckCPUID();
     static bool CheckHypervisorBit();
-    
+    static bool CheckBIOSInfo();
+
 private:
     // Registry-based detection
     static bool CheckRegistry();
     static bool CheckRegistryKeys();
-    static bool CheckBIOSInfo();
-    
+
     // Hardware detection
     static bool CheckMACAddress();
     static bool CheckDevices();
