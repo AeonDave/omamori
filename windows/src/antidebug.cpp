@@ -1,5 +1,6 @@
 #include "../include/antidebug.hpp"
 #include "../include/internal.hpp"
+#include "../include/syscall.hpp"
 #include <intrin.h>
 #include <tlhelp32.h>
 
@@ -7,14 +8,284 @@ namespace Omamori {
 namespace Windows {
 namespace AntiDebug {
 
+// =============================================================================
+// Advanced Techniques - ETW Patching
+// =============================================================================
+
+bool Detector::PatchETW() {
+    // Get ntdll.dll base
+    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+    if (!hNtdll) return false;
+    
+    // Get EtwEventWrite address
+    FARPROC pEtwEventWrite = GetProcAddress(hNtdll, "EtwEventWrite");
+    if (!pEtwEventWrite) return false;
+    
+    // Patch with RET (0xC3) to disable ETW
+    DWORD oldProtect;
+    if (!VirtualProtect(reinterpret_cast<void*>(pEtwEventWrite), 1, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        return false;
+    }
+    
+    // Write RET instruction
+    *reinterpret_cast<unsigned char*>(pEtwEventWrite) = 0xC3;
+    
+    // Restore protection
+    VirtualProtect(reinterpret_cast<void*>(pEtwEventWrite), 1, oldProtect, &oldProtect);
+    
+    return true;
+}
+
+// =============================================================================
+// Advanced Techniques - AMSI Bypass
+// =============================================================================
+
+bool Detector::PatchAMSI() {
+    // Load amsi.dll if not loaded
+    HMODULE hAmsi = LoadLibraryA("amsi.dll");
+    if (!hAmsi) return true; // AMSI not present, nothing to patch
+    
+    // Get AmsiScanBuffer address
+    FARPROC pAmsiScanBuffer = GetProcAddress(hAmsi, "AmsiScanBuffer");
+    if (!pAmsiScanBuffer) return false;
+    
+    // Patch to return AMSI_RESULT_CLEAN (0)
+    // mov eax, 0x80070057 (E_INVALIDARG) ; ret
+    // This makes AMSI think the scan failed and allows the code
+    DWORD oldProtect;
+    if (!VirtualProtect(reinterpret_cast<void*>(pAmsiScanBuffer), 8, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        return false;
+    }
+    
+#ifdef _WIN64
+    // x64: mov eax, 0x80070057; ret
+    unsigned char patch[] = { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3 };
+#else
+    // x86: mov eax, 0x80070057; ret 0x18
+    unsigned char patch[] = { 0xB8, 0x57, 0x00, 0x07, 0x80, 0xC2, 0x18, 0x00 };
+#endif
+    
+    memcpy(reinterpret_cast<void*>(pAmsiScanBuffer), patch, sizeof(patch));
+    
+    // Restore protection
+    VirtualProtect(reinterpret_cast<void*>(pAmsiScanBuffer), 8, oldProtect, &oldProtect);
+    
+    return true;
+}
+
+// =============================================================================
+// Advanced Techniques - INT 2D Check
+// =============================================================================
+
+bool Detector::CheckInt2D() {
+#ifdef _MSC_VER
+    __try {
+        // INT 2D is a debug break interrupt
+        // If a debugger is present, it intercepts this
+        // If no debugger, an exception is raised
+        __asm {
+            xor eax, eax
+            int 0x2d
+            nop
+        }
+        // If we reach here without exception, debugger is present
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Exception occurred - no debugger (or debugger passed it)
+        return false;
+    }
+#else
+    // MinGW alternative using VEH
+    // Use static to communicate with the exception handler
+    static volatile bool s_exceptionOccurred = false;
+    s_exceptionOccurred = false;
+    
+    // Use VEH to catch the exception
+    PVOID handler = AddVectoredExceptionHandler(1, [](PEXCEPTION_POINTERS ep) -> LONG {
+        if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT ||
+            ep->ExceptionRecord->ExceptionCode == STATUS_BREAKPOINT) {
+            s_exceptionOccurred = true;
+#ifdef _WIN64
+            ep->ContextRecord->Rip += 2;  // Skip INT 2D (2 bytes)
+#else
+            ep->ContextRecord->Eip += 2;  // Skip INT 2D (2 bytes)
+#endif
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    });
+    
+    if (handler) {
+        // Try to execute INT 2D
+        // Under debugger this won't raise exception
+        __asm__ volatile(
+            "xor %%eax, %%eax\n"
+            ".byte 0xCD, 0x2D\n"  // INT 2D
+            "nop\n"
+            : : : "eax"
+        );
+        RemoveVectoredExceptionHandler(handler);
+        
+        // If no exception occurred, debugger intercepted the INT 2D
+        return !s_exceptionOccurred;
+    }
+    
+    return false;
+#endif
+}
+
+// =============================================================================
+// Advanced Techniques - Debug Filter State
+// =============================================================================
+
+bool Detector::DisableDebugFilters() {
+    // NtSetDebugFilterState can disable debug output
+    typedef NTSTATUS(NTAPI* pNtSetDebugFilterState)(ULONG ComponentId, ULONG Level, BOOLEAN State);
+    
+    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+    if (!hNtdll) return false;
+    
+    auto NtSetDebugFilterState = reinterpret_cast<pNtSetDebugFilterState>(
+        GetProcAddress(hNtdll, "NtSetDebugFilterState")
+    );
+    
+    if (!NtSetDebugFilterState) return false;
+    
+    // Disable all debug components (0-100)
+    for (ULONG i = 0; i < 100; i++) {
+        for (ULONG level = 0; level < 4; level++) {
+            NtSetDebugFilterState(i, level, FALSE);
+        }
+    }
+    
+    return true;
+}
+
+bool Detector::CheckDebugFilterState() {
+    // NtQueryDebugFilterState returns TRUE if debugging is enabled for a component
+    typedef NTSTATUS(NTAPI* pNtQueryDebugFilterState)(ULONG ComponentId, ULONG Level);
+    
+    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+    if (!hNtdll) return false;
+    
+    auto NtQueryDebugFilterState = reinterpret_cast<pNtQueryDebugFilterState>(
+        GetProcAddress(hNtdll, "NtQueryDebugFilterState")
+    );
+    
+    if (!NtQueryDebugFilterState) return false;
+    
+    // Check if any debug filter is enabled
+    for (ULONG i = 0; i < 10; i++) {
+        NTSTATUS status = NtQueryDebugFilterState(i, 0);
+        if (status == TRUE) {
+            return true; // Debug filter enabled - possible debugger
+        }
+    }
+    
+    return false;
+}
+
+// =============================================================================
+// Advanced Techniques - Thread Context Manipulation
+// =============================================================================
+
+bool Detector::CheckThreadContextManipulation() {
+    // Set DR7 to a specific value and check if it persists
+    // Debuggers often clear or modify debug registers
+    
+    CONTEXT ctx = {};
+    ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    
+    if (!GetThreadContext(GetCurrentThread(), &ctx)) {
+        return false;
+    }
+    
+    // Save original values
+    DWORD64 originalDr7 = ctx.Dr7;
+    
+    // Set a specific pattern
+    ctx.Dr7 = 0x155; // Enable DR0-DR3 local breakpoints
+    
+    if (!SetThreadContext(GetCurrentThread(), &ctx)) {
+        return false;
+    }
+    
+    // Read back
+    ctx.Dr7 = 0;
+    if (!GetThreadContext(GetCurrentThread(), &ctx)) {
+        return false;
+    }
+    
+    // Check if value was modified
+    bool debuggerPresent = (ctx.Dr7 != 0x155);
+    
+    // Restore original
+    ctx.Dr7 = originalDr7;
+    SetThreadContext(GetCurrentThread(), &ctx);
+    
+    return debuggerPresent;
+}
+
+// =============================================================================
+// Advanced Techniques - Memory Breakpoint Detection
+// =============================================================================
+
+bool Detector::CheckMemoryBreakpoints() {
+    // Scan our own code for INT3 (0xCC) breakpoints
+    HMODULE hModule = GetModuleHandleA(nullptr);
+    if (!hModule) return false;
+    
+    // Get DOS header
+    auto dosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(hModule);
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    
+    // Get NT headers
+    auto ntHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(
+        reinterpret_cast<BYTE*>(hModule) + dosHeader->e_lfanew
+    );
+    
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+    
+    // Get .text section
+    auto section = IMAGE_FIRST_SECTION(ntHeaders);
+    for (WORD i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++, section++) {
+        if (memcmp(section->Name, ".text", 5) == 0) {
+            BYTE* codeStart = reinterpret_cast<BYTE*>(hModule) + section->VirtualAddress;
+            SIZE_T codeSize = section->Misc.VirtualSize;
+
+            // Scan for INT3 (0xCC) with padding-aware heuristic
+            size_t runLength = 0;
+            for (SIZE_T j = 0; j < codeSize; j++) {
+                if (codeStart[j] == 0xCC) {
+                    runLength++;
+                } else {
+                    if (runLength > 0 && runLength <= 2) {
+                        return true; // Likely breakpoint, not padding
+                    }
+                    runLength = 0;
+                }
+            }
+            if (runLength > 0 && runLength <= 2) {
+                return true;
+            }
+            break;
+        }
+    }
+    
+    return false;
+}
+
 // PEB-based checks
 bool Detector::CheckPEBBeingDebugged() {
     auto peb = Internal::ReadPEB();
+    if (!peb) return false;
     return peb->BeingDebugged != 0;
 }
 
 bool Detector::CheckPEBNtGlobalFlag() {
     auto peb = Internal::ReadPEB();
+    if (!peb) return false;
 #ifdef _WIN64
     DWORD* pNtGlobalFlag = reinterpret_cast<DWORD*>(reinterpret_cast<BYTE*>(peb) + 0xBC);
 #else
@@ -25,6 +296,7 @@ bool Detector::CheckPEBNtGlobalFlag() {
 
 bool Detector::CheckPEBHeapFlags() {
     auto peb = Internal::ReadPEB();
+    if (!peb) return false;
     PVOID heapBase = peb->ProcessHeap;
     
     if (!heapBase) return false;
@@ -258,6 +530,11 @@ bool Detector::IsDebuggerPresent(uint32_t methods) {
     if (methods & DEBUG_OBJECT_HANDLE && CheckDebugObjectHandle()) return true;
     if (methods & SYSTEM_KERNEL_DEBUGGER && CheckKernelDebugger()) return true;
     if (methods & PARENT_PROCESS_CHECK && CheckParentProcess()) return true;
+    // New advanced techniques
+    if (methods & INT_2D_CHECK && CheckInt2D()) return true;
+    if (methods & DEBUG_FILTER_STATE && CheckDebugFilterState()) return true;
+    if (methods & THREAD_CONTEXT_CHECK && CheckThreadContextManipulation()) return true;
+    if (methods & MEMORY_BREAKPOINT && CheckMemoryBreakpoints()) return true;
     
     return false;
 }
@@ -279,6 +556,12 @@ void Detector::TerminateIfDebugged() {
 bool Detector::EnableAntiDebug() {
     HideThreadFromDebugger();
     ClearHardwareBreakpoints();
+    
+    // Advanced evasion techniques
+    PatchETW();           // Disable Event Tracing for Windows
+    PatchAMSI();          // Bypass AMSI scanning
+    DisableDebugFilters(); // Disable debug output filters
+    
     return true;
 }
 

@@ -4,7 +4,10 @@
 #include <cstddef>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 #include <mutex>
+#include <thread>
+#include <atomic>
 
 #ifdef __linux__
 #include <signal.h>
@@ -51,7 +54,10 @@ struct EncryptedPage {
     size_t size;             // Page size (usually 4KB)
     bool encrypted;          // Current state
     uint64_t accessCount;    // Statistics
+    uint64_t lastDecryptedNs; // Timestamp of last decrypt (for auto re-encrypt)
     StreamCipher cipher;     // Per-page cipher
+    EncryptedPage* next;      // Lock-free list for signal-safe lookup (Linux)
+    bool active;              // True if page is valid (Linux signal handler)
 };
 
 /**
@@ -104,10 +110,18 @@ private:
     bool RegisterPage(void* address, size_t size);
     bool UnregisterPage(void* address);
     EncryptedPage* FindPage(void* address);
+    EncryptedPage* FindPageUnsafe(void* address);  // Lock-free version for signal handlers
+    EncryptedPage* FindPageSignalSafe(void* address); // Linux-only signal-safe list traversal
     
     // Encryption operations
     void EncryptPage(EncryptedPage* page);
     void DecryptPage(EncryptedPage* page);
+
+    // Auto re-encryption thread
+    void StartReencryptThread();
+    void StopReencryptThread();
+    void ReencryptLoop();
+    static uint64_t GetTimeNs();
     
     // Platform-specific signal/exception handlers
     static void InstallHandlers();
@@ -119,16 +133,27 @@ private:
 #elif _WIN32
     static LONG WINAPI VehHandler(EXCEPTION_POINTERS* exceptionInfo);
     static PVOID vehHandle_;
+    static DWORD WINAPI ReencryptThreadProc(LPVOID param);
+    HANDLE reencryptThreadHandle_;
 #endif
     
     // Data members
     std::unordered_map<void*, std::unique_ptr<EncryptedPage>> pages_;
+    std::vector<std::unique_ptr<EncryptedPage>> retiredPages_; // Keep pages alive for signal safety
     std::mutex mutex_;
     Stats stats_;
     
     bool initialized_;
     bool autoReEncrypt_;
     uint32_t decryptTimeoutMs_;
+
+#ifdef __linux__
+    std::thread reencryptThread_;
+#endif
+    std::atomic<bool> reencryptRunning_;
+    std::atomic<EncryptedPage*> signalPagesHead_;
+    std::atomic<uint64_t> signalPageFaults_;
+    std::atomic<uint64_t> signalDecryptOperations_;
     
     // Master key per session
     uint8_t masterKey_[32];

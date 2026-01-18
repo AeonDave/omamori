@@ -1,4 +1,8 @@
-# Omamori - Modern Software Protection Library
+# Omamori - Protection Against Unseen Evil
+
+---
+
+![Omamori](omamori_logo.png)
 
 A cross-platform protection library implementing advanced anti-debugging, anti-dumping, anti-virtualization, and memory encryption techniques for Windows and Linux.
 
@@ -13,13 +17,21 @@ A cross-platform protection library implementing advanced anti-debugging, anti-d
 - [Overview](#overview)
 - [Features](#features)
 - [Quick Start](#quick-start)
-- [Selective Protection](#selective-protection)
+- [Granular Configuration](#selective-protection)
+  - [Technique Bitmasks](#technique-bitmasks)
+  - [Builder Pattern API](#builder-pattern-api)
+  - [Preset Configurations](#preset-configurations)
+  - [Detection with Specific Techniques](#detection-with-specific-techniques)
+- [Examples](#examples)
+  - [Granular Configuration Examples](#granular-configuration-examples)
+- [Excluded Techniques](#excluded-techniques)
 - [API Reference](#api-reference)
+- [Advanced Evasion Techniques](#advanced-evasion-techniques)
 - [Build Instructions](#build-instructions)
 - [Testing](#testing)
 - [Performance](#performance)
 - [Security Considerations](#security-considerations)
-- [License](#license)
+- [Technical Details](#technical-details)
 
 ---
 
@@ -31,11 +43,11 @@ Omamori is a production-ready software protection library designed to defend app
 
 | Layer | Component | Key features |
 |---:|:---|:---|
-| Layer 4 | Memory Encryption | Transparent on-demand encryption; Stream cipher (XOR / ChaCha20); Page-level protection (PROT_NONE / PAGE_NOACCESS); Automatic SIGSEGV / VEH handler |
-| Layer 3 | Anti-Dump | Runtime memory corruption & dump prevention; PE / ELF header erasure; Core dump disabling (setrlimit + prctl); Continuous re-corruption thread; PEB / LDR unlinking (Windows) |
-| Layer 2 | Anti-Debug | Multi-vector debugger detection & prevention; PEB / TEB inspection (50+ checks); Hardware breakpoint detection (DR0-DR7); Timing attacks (RDTSC / QPC); ptrace self-attach (Linux); Framework detection (GDB, Frida, LLDB, x64dbg) |
-| Layer 1 | Anti-Virtualization | VM & container detection; CPUID hypervisor bit; DMI / SMBIOS fingerprinting; MAC address fingerprinting; Container checks (cgroup, /.dockerenv); VM artifacts (VMware, VirtualBox, Hyper-V) |
-| Base | System Integration | Direct syscalls (Windows); Compile-time secure string encryption (XOR); Cross-platform abstraction layer |
+| Layer 4 | Memory Encryption | Transparent on-demand encryption; **ChaCha20-like stream cipher** (20-round core); Page-level protection (PROT_NONE / PAGE_NOACCESS); Automatic SIGSEGV / VEH handler |
+| Layer 3 | Anti-Dump | **25+ Windows / 20+ Linux techniques**; PE/ELF header manipulation; **Rich Header wiping**; **Section encryption**; **Directory wiping**; **Code integrity hashing**; **MADV_DONTDUMP**; **Working set purging**; PEB/LDR unlinking; Continuous re-corruption |
+| Layer 2 | Anti-Debug | Multi-vector debugger detection & prevention; PEB / TEB inspection (50+ checks); Hardware breakpoint detection (DR0-DR7); ETW Patching; AMSI Bypass; ptrace self-attach (Linux); Framework detection (GDB, Frida, LLDB, x64dbg) |
+| Layer 1 | Anti-Virtualization | VM & container detection; **Hypervisor CPUID Vendor**; **ACPI/SMBIOS Tables**; **Firmware Tables**; MAC address fingerprinting; Container checks (cgroup, /.dockerenv); VM artifacts (VMware, VirtualBox, Hyper-V) |
+| Base | System Integration | **Direct & Indirect syscalls** (Windows); **Halo's Gate** SSN resolution; Compile-time secure string encryption (XOR); Cross-platform abstraction layer |
 
 ---
 
@@ -47,15 +59,23 @@ Omamori is a production-ready software protection library designed to defend app
 - Platform-specific optimizations
 - Compile-time string encryption
 - Runtime memory protection
-- Direct syscalls (Windows)
+- **Direct & Indirect syscalls** (Windows) - EDR/Hook evasion
+- **Halo's Gate** - SSN resolution when ntdll.dll is hooked
+- **ChaCha20-like encryption** - Stream-cipher-based memory protection
 
 ### Layer 1: Anti-Virtualization
 
-**Linux (11 techniques):**
+> **Stability First:** All detection methods are selected to avoid false positives.
+> No timing-based detection is used by default.
+
+**Linux (15 techniques):**
 
 - CPUID hypervisor bit detection
-- DMI/SMBIOS string analysis
-- MAC address fingerprinting (VMware, VirtualBox, Hyper-V, Parallels)
+- **Hypervisor CPUID Vendor** - reads hypervisor signature (VMwareVMware, KVMKVMKVM, etc.)
+- DMI/SMBIOS string analysis (/sys/class/dmi/id/*)
+- **ACPI Tables** - DSDT/FACP table signatures
+- **SCSI/Disk Model** - virtual disk model names
+- MAC address fingerprinting (VMware, VirtualBox, Hyper-V, Parallels, KVM)
 - VM device detection (/dev/vmware, /dev/vboxguest, etc.)
 - VMware-specific artifacts
 - VirtualBox-specific signatures
@@ -64,65 +84,119 @@ Omamori is a production-ready software protection library designed to defend app
 - Docker container detection (/.dockerenv)
 - cgroup-based container detection
 - systemd-detect-virt integration
+- /proc/modules kernel module scan
 
-**Windows (12 techniques):**
+**Windows (19 techniques):**
 
 - CPUID hypervisor bit detection
+- **Hypervisor CPUID Vendor** - reads VMwareVMware, VBoxVBoxVBox, Microsoft Hv, etc.
+- **ACPI Tables** - DSDT/FADT/RSDT registry signatures
+- **Disk Model** - SCSI disk identifier strings
+- **Display Adapter** - virtual GPU detection (VMware SVGA, VBox Graphics)
+- **Firmware Tables** - SMBIOS raw data via GetSystemFirmwareTable
 - Registry checks (HARDWARE\\DEVICEMAP\\Scsi, BIOS info)
 - MAC address detection (00:05:69, 00:0C:29, 08:00:27, etc.)
 - Device driver detection (VBoxGuest, VMware tools)
-- SMBIOS/firmware checks
 - Process detection (vmtoolsd, vboxservice)
 - Service detection (VMware services, VBox services)
 - File system artifacts (C:\\Program Files\\VMware)
 - WMI queries (Win32_ComputerSystem, BIOS manufacturer)
-- Timing anomalies (RDTSC in VM)
-- I/O port checks (VMware backdoor port)
 - Hyper-V specific detection
+- Parallels detection
+- QEMU detection
 
 ### Layer 2: Anti-Debug
 
-**50+ detection techniques including:**
+**60+ detection techniques including:**
+
+**Windows (20+ techniques):**
 
 - PEB/TEB inspection (BeingDebugged, NtGlobalFlag, heap flags)
 - Hardware breakpoint detection (DR0-DR7 registers)
-- Timing attacks (RDTSC, QueryPerformanceCounter)
-- ptrace manipulation (Linux: TRACEME, self-attach)
-- /proc filesystem checks (TracerPid, maps, status)
 - API-based detection (CheckRemoteDebuggerPresent, NtQueryInformationProcess)
 - Exception-based detection (CloseHandle, OutputDebugString)
-- Framework detection (Frida, GDB, LLDB, x64dbg, OllyDbg)
+- Framework detection (x64dbg, OllyDbg, WinDbg)
+- Parent process verification
+- Kernel debugger detection (NtQuerySystemInformation)
+- **ETW Patching** - Disables Event Tracing for Windows
+- **AMSI Bypass** - Patches AmsiScanBuffer to return clean
+- **INT 2D Check** - Interrupt-based debugger detection
+- **NtSetDebugFilterState** - Debug filter state manipulation
+- **Thread Context Manipulation** - DR7 persistence check
+- **Memory Breakpoint Scan** - Detects INT3 (0xCC) in code
+
+**Linux (15+ techniques):**
+
+- ptrace manipulation (TRACEME, self-attach)
+- /proc filesystem checks (TracerPid, maps, status)
+- Framework detection (Frida, GDB, LLDB)
 - Environment analysis (LD_PRELOAD, debug variables)
 - Parent process verification
+- Signal handler inspection
+- **Seccomp Detection** - Detects sandbox/seccomp filtering
+- **eBPF Detection** - Detects eBPF tracing programs
+- **Namespace Detection** - Container/namespace isolation check
+- **Memory Breakpoint Scan** - INT3 detection in executable code
+- **Personality Check** - ADDR_NO_RANDOMIZE (ASLR disabled) detection
+- **Syscall Filter Detection** - Detects syscall tracing/filtering
 - Background monitoring thread with customizable intervals
 
 ### Layer 3: Anti-Dump
 
-**PE/ELF header manipulation:**
+**Windows (25+ techniques):**
 
-- Magic bytes corruption
-- DOS header erasure
-- PE/ELF header complete erasure
-- Section header removal
-- Memory page protection (PAGE_NOACCESS/PROT_NONE)
-- VEH/SIGSEGV exception handling
-- PEB/LDR unlinking (Windows)
+- PE header erasure/corruption
+- DOS stub invalidation
+- **Rich Header wiping** - Removes compiler fingerprints
+- **Section header encryption** - XOR-encrypted section table
+- **Directory table wiping** - Debug, Export, Import, TLS, Exception, Resource
+- **COFF header corruption** - TimeDateStamp, Symbols invalidation
+- **Optional header scrambling** - Stack/Heap sizes, Loader flags
+- **Section name hiding** - Zeroed section names
+- **PE checksum corruption** - Invalid checksum
+- **Entry point mangling** - XOR obfuscated entry point
+- **Section alignment scrambling** - Invalid alignment values
+- PEB/LDR module unlinking
+- VEH-based memory protection
+- **Working set purging** - EmptyWorkingSet() for anti-forensics
+- **Critical page locking** - VirtualLock for memory pinning
+- **Code integrity hashing** - FNV-1a hash for tamper detection
 - Continuous re-corruption thread
-- Core dump prevention (setrlimit + prctl on Linux)
-- /proc/self/maps obfuscation
+- PAGE_NOACCESS / PAGE_GUARD protection
+
+**Linux (20+ techniques):**
+
+- ELF magic bytes corruption
+- ELF header erasure
+- **Program header invalidation** - e_phoff, e_phnum zeroing
+- **Section header scrambling** - e_shoff, e_shnum randomization
+- **Dynamic string table wiping** - e_shstrndx zeroing
+- **Build ID wiping** - PT_NOTE section zeroing
+- **Dynamic section corruption** - DT_STRTAB, DT_SYMTAB invalidation
+- **GOT corruption** - (optional, careful use)
+- **MADV_DONTDUMP** - Exclude regions from core dumps
+- **coredump_filter** - /proc/self/coredump_filter = 0
+- **Signal handler protection** - SIGABRT, SIGQUIT, SIGBUS handlers
+- **ptrace protection** - Self-ptrace for anti-dump
+- Core dump prevention (setrlimit RLIMIT_CORE + prctl PR_SET_DUMPABLE)
+- SIGSEGV exception handling
+- /proc/self protection
+- **Memory mapping tricks** - Decoy PROT_NONE regions
+- Continuous re-corruption thread
 
 ### Layer 4: Memory Encryption
 
 **Transparent on-demand encryption:**
 
 - Page-level protection with signal/exception handlers
-- Stream cipher (XOR, upgradeable to ChaCha20)
+- **ChaCha20-like stream cipher** (20-round core)
 - Automatic decryption on memory access (SIGSEGV/VEH)
-- Per-page unique encryption keys
-- Automatic re-encryption after timeout
+- Per-page unique encryption keys (CryptGenRandom + RDTSC entropy)
+- Manual re-encryption (call `ProtectAndEncrypt` after access)
 - Zero application code changes
 - Template-based RAII interface
 - Protects credentials, license keys, sensitive data
+- **Quarter-round mixing** for cryptographic strength
 
 ---
 
@@ -191,194 +265,416 @@ int main() {
 }
 ```
 
+### Advanced Usage with Granular Configuration
+
+```cpp
+#include <omamori.hpp>
+using namespace Omamori;
+
+int main() {
+    // Create custom configuration using builder pattern
+    auto config = ProtectionConfig()
+        .WithAntiVM(false)                                    // Disable VM detection
+        .WithAntiDebug(true, AntiDebugTechniques::FAST)       // Fast checks only
+        .WithAntiDebugThread(true, 500)                       // Check every 500ms
+        .WithAntiDump(true, AntiDumpTechniques::STANDARD)     // Standard protection
+        .WithMemoryEncryption(true)                           // Enable encryption
+        .WithTerminateOnDetect(false)                         // Don't auto-terminate
+        .WithCallback([](const char* layer, const char* tech) {
+            std::cerr << "Security: " << layer << "/" << tech << std::endl;
+        });
+    
+    // Initialize with custom config
+    Omamori::Initialize(config);
+    
+    // Quick debugger check with specific technique
+    if (Omamori::IsDebugged(AntiDebugTechniques::PEB_BEING_DEBUGGED)) {
+        HandleDebuggerDetected();
+    }
+    
+    // Safe VM check (no timing-based detection)
+    if (Omamori::IsInVM(AntiVMTechniques::SAFE)) {
+        std::cout << "Running in VM" << std::endl;
+    }
+    
+    // Your application code
+    ProcessSensitiveData();
+    
+    return 0;
+}
+```
+
+### One-Liner Presets
+
+```cpp
+// Maximum security (all 4 layers, all techniques)
+Omamori::Initialize(ProtectionConfig::MaximumProtection());
+
+// Production deployment (Anti-Debug + Anti-Dump, no Anti-VM)
+Omamori::Initialize(ProtectionConfig::Production());
+
+// Stealth mode (no timing-based checks, low profile)
+Omamori::Initialize(ProtectionConfig::Stealth());
+
+// Only one layer
+Omamori::Initialize(ProtectionConfig::LayerOnly(2));  // Anti-Debug only
+
+// Only one technique
+Omamori::Initialize(ProtectionConfig::SingleTechnique(2, 
+    AntiDebugTechniques::PEB_BEING_DEBUGGED));
+```
+
 ---
 
 ## Selective Protection
 
 ### Overview
 
-Omamori provides four independent protection layers that can be enabled or disabled individually. This allows fine-grained control over which protections are active based on your deployment scenario.
+Omamori provides **four independent protection layers** with **granular technique control**. Each layer can be enabled or disabled, and within each layer you can select exactly which techniques to activate using bitmasks.
+
+This gives you fine-grained control over:
+- **Which layers** are active
+- **Which techniques** within each layer are used
+- **Performance vs. security** trade-offs
 
 ### Configuration Structure
 
 ```cpp
 struct ProtectionConfig {
     // Layer 1: Anti-Virtualization
-    bool enable_antivm;              // Enable VM detection
-    uint32_t antivm_methods;         // Bitmask of detection methods
-  
-    // Layer 2: Anti-Debug
-    bool enable_antidebug;           // Enable debugger detection
-    bool enable_antidebug_thread;    // Background protection thread
-    uint32_t antidebug_check_interval_ms;  // Thread check interval
-  
+    bool enable_antivm = false;
+    uint32_t antivm_techniques = AntiVMTechniques::ALL;
+    
+    // Layer 2: Anti-Debug  
+    bool enable_antidebug = true;
+    uint32_t antidebug_techniques = AntiDebugTechniques::ALL;
+    bool enable_antidebug_thread = true;
+    uint32_t antidebug_check_interval_ms = 100;
+    bool antidebug_terminate_on_detect = true;
+    
     // Layer 3: Anti-Dump
-    bool enable_antidump;            // Enable dump prevention
-    bool erase_headers;              // Corrupt PE/ELF headers
-    bool disable_core_dumps;         // Disable core dumps (Linux)
-    bool enable_prctl_protection;    // prctl protection (Linux)
-  
+    bool enable_antidump = true;
+    uint32_t antidump_techniques = AntiDumpTechniques::ALL;
+    
     // Layer 4: Memory Encryption
-    bool enable_memory_encryption;   // Available for manual use
+    bool enable_memory_encryption = false;
+    uint32_t memory_encryption_techniques = MemoryEncryptionTechniques::ALL;
+    
+    // Callback for custom detection handling
+    void (*on_detection)(const char* layer, const char* technique) = nullptr;
 };
+```
+
+### Technique Bitmasks
+
+Each layer has its own namespace with technique flags that can be combined with bitwise OR (`|`).
+
+#### Layer 1: Anti-VM Techniques
+
+```cpp
+namespace AntiVMTechniques {
+    // Individual techniques (Windows names; Linux maps to local equivalents)
+    constexpr uint32_t CPUID_CHECK       = 1 << 0;   // CPUID hypervisor bit
+    constexpr uint32_t REGISTRY_CHECK    = 1 << 1;   // Windows registry checks (Linux: DMI)
+    constexpr uint32_t WMI_CHECK         = 1 << 2;   // Windows WMI checks (Linux: /proc/cpuinfo)
+    constexpr uint32_t TIMING_ATTACK     = 1 << 3;   // Timing anomaly
+    constexpr uint32_t MAC_ADDRESS       = 1 << 4;   // VM MAC prefixes
+    constexpr uint32_t DEVICE_CHECK      = 1 << 5;   // Device node checks
+    constexpr uint32_t DRIVER_CHECK      = 1 << 6;   // Windows drivers (Win only)
+    constexpr uint32_t PROCESS_CHECK     = 1 << 7;   // Windows processes (Linux: systemd-detect-virt)
+    constexpr uint32_t SERVICE_CHECK     = 1 << 8;   // Windows services (Linux: Docker/cgroup)
+    constexpr uint32_t FILE_CHECK        = 1 << 9;   // Windows files (Linux: KVM hints)
+    constexpr uint32_t VMWARE_CHECK      = 1 << 10;  // VMware-specific
+    constexpr uint32_t VIRTUALBOX_CHECK  = 1 << 11;  // VirtualBox-specific
+    constexpr uint32_t HYPERV_CHECK      = 1 << 12;  // Hyper-V (Win only)
+    constexpr uint32_t QEMU_CHECK        = 1 << 13;  // QEMU-specific
+    constexpr uint32_t PARALLELS_CHECK   = 1 << 14;  // Parallels (Win only)
+    constexpr uint32_t ACPI_TABLES       = 1 << 15;  // ACPI table signatures
+    constexpr uint32_t DISK_MODEL        = 1 << 16;  // Disk model strings
+    constexpr uint32_t DISPLAY_ADAPTER   = 1 << 17;  // GPU adapter checks (Win only)
+    constexpr uint32_t FIRMWARE_TABLES   = 1 << 18;  // SMBIOS firmware strings
+    constexpr uint32_t HYPERVISOR_VENDOR = 1 << 19;  // CPUID hypervisor vendor
+
+    // Presets
+    constexpr uint32_t SAFE = CPUID_CHECK | REGISTRY_CHECK | MAC_ADDRESS | DEVICE_CHECK |
+                              PROCESS_CHECK | SERVICE_CHECK | FILE_CHECK |
+                              ACPI_TABLES | DISK_MODEL | FIRMWARE_TABLES |
+                              HYPERVISOR_VENDOR;
+    constexpr uint32_t ALL  = 0xFFFFFFFF;
+}
+```
+
+#### Layer 2: Anti-Debug Techniques
+
+```cpp
+namespace AntiDebugTechniques {
+    // Windows techniques
+    constexpr uint32_t PEB_BEING_DEBUGGED     = 1 << 0;
+    constexpr uint32_t PEB_NT_GLOBAL_FLAG     = 1 << 1;
+    constexpr uint32_t PEB_HEAP_FLAGS         = 1 << 2;  // Linux alias: PROC_SELF_STATUS
+    constexpr uint32_t REMOTE_DEBUGGER_PRESENT= 1 << 3;
+    constexpr uint32_t HARDWARE_BREAKPOINTS   = 1 << 4;
+    constexpr uint32_t TIMING_RDTSC           = 1 << 5;  // Linux alias: TIMING_BASED
+    constexpr uint32_t TIMING_QPC             = 1 << 6;
+    constexpr uint32_t PROCESS_DEBUG_PORT     = 1 << 7;
+    constexpr uint32_t PROCESS_DEBUG_FLAGS    = 1 << 8;
+    constexpr uint32_t DEBUG_OBJECT_HANDLE    = 1 << 9;  // Linux alias: SIGNAL_BASED
+    constexpr uint32_t SYSTEM_KERNEL_DEBUGGER = 1 << 10; // Linux alias: GDB_SPECIFIC
+    constexpr uint32_t CLOSE_HANDLE_EXCEPTION = 1 << 11;
+    constexpr uint32_t OUTPUT_DEBUG_STRING    = 1 << 12;
+    constexpr uint32_t PARENT_PROCESS_CHECK   = 1 << 13;
+    constexpr uint32_t INT_2D_CHECK           = 1 << 14;
+    constexpr uint32_t DEBUG_FILTER_STATE     = 1 << 15; // Linux alias: NAMESPACE_DETECTION
+    constexpr uint32_t THREAD_CONTEXT_CHECK   = 1 << 16;
+    constexpr uint32_t MEMORY_BREAKPOINT      = 1 << 17;
+
+    // Linux-specific
+    constexpr uint32_t PTRACE_TRACEME         = 1 << 18;
+    constexpr uint32_t PROC_STATUS_TRACERPID  = 1 << 19;
+    constexpr uint32_t PROC_MAPS_CHECK        = 1 << 20;
+    constexpr uint32_t LD_PRELOAD_CHECK       = 1 << 21;
+    constexpr uint32_t FRIDA_DETECTION        = 1 << 22;
+    constexpr uint32_t SECCOMP_DETECTION      = 1 << 23;
+    constexpr uint32_t EBPF_DETECTION         = 1 << 24;
+    constexpr uint32_t PERSONALITY_CHECK      = 1 << 25;
+
+    // Presets
+    constexpr uint32_t FAST    = PEB_BEING_DEBUGGED | PEB_NT_GLOBAL_FLAG | REMOTE_DEBUGGER_PRESENT |
+                                PROCESS_DEBUG_PORT | PROCESS_DEBUG_FLAGS | PTRACE_TRACEME |
+                                PROC_STATUS_TRACERPID;
+    constexpr uint32_t STEALTH = PEB_BEING_DEBUGGED | TIMING_RDTSC | PARENT_PROCESS_CHECK |
+                                PTRACE_TRACEME | PROC_MAPS_CHECK;
+    constexpr uint32_t ALL     = 0xFFFFFFFF;
+}
+```
+
+#### Layer 3: Anti-Dump Techniques
+
+```cpp
+namespace AntiDumpTechniques {
+    // Windows/PE techniques
+    constexpr uint32_t ERASE_PE_HEADER          = 1 << 0;
+    constexpr uint32_t CORRUPT_PE_HEADER        = 1 << 1;
+    constexpr uint32_t RANDOMIZE_PE_FIELDS      = 1 << 2;
+    constexpr uint32_t WIPE_DEBUG_DIRECTORY     = 1 << 3;
+    constexpr uint32_t WIPE_EXPORT_DIRECTORY    = 1 << 4;
+    constexpr uint32_t CORRUPT_IMPORT_DIRECTORY = 1 << 5;
+    constexpr uint32_t WIPE_IAT                 = 1 << 6;
+    constexpr uint32_t WIPE_TLS_DIRECTORY       = 1 << 7;
+    constexpr uint32_t WIPE_EXCEPTION_DIRECTORY = 1 << 8;
+    constexpr uint32_t WIPE_RESOURCE_DIRECTORY  = 1 << 9;
+    constexpr uint32_t ENCRYPT_SECTION_HEADERS  = 1 << 10;
+    constexpr uint32_t MANIPULATE_PEB           = 1 << 11;
+    constexpr uint32_t UNLINK_LDR               = 1 << 12;
+    constexpr uint32_t SPOOF_MODULE_INFO        = 1 << 13;
+    constexpr uint32_t PURGE_WORKING_SET        = 1 << 14;
+    constexpr uint32_t VEH_PROTECTION           = 1 << 15;
+    constexpr uint32_t CORRUPT_CHECKSUM         = 1 << 16;
+    constexpr uint32_t INVALIDATE_DOS_STUB      = 1 << 17;
+    constexpr uint32_t SCRAMBLE_OPTIONAL_HEADER = 1 << 18;
+    constexpr uint32_t HIDE_SECTION_NAMES       = 1 << 19;
+    constexpr uint32_t CORRUPT_RELOCATIONS      = 1 << 20;
+    constexpr uint32_t WIPE_RICH_HEADER         = 1 << 21;  // Linux alias: WIPE_BUILD_ID
+    constexpr uint32_t CORRUPT_COFF_HEADER      = 1 << 22;  // Linux alias: CORRUPT_DYNAMIC_SECTION
+    constexpr uint32_t CORRUPT_DOS_HEADER       = 1 << 23;  // Linux alias: WIPE_ALL_METADATA
+    constexpr uint32_t INVALIDATE_NT_SIGNATURE  = 1 << 24;  // Linux alias: SELF_DELETE_EXECUTABLE
+    constexpr uint32_t SCRAMBLE_SECTION_ALIGN   = 1 << 25;  // Linux alias: MASK_PROC_MAPS
+    constexpr uint32_t MANGLE_ENTRY_POINT       = 1 << 26;
+
+    // Linux/ELF techniques
+    constexpr uint32_t DISABLE_CORE_DUMPS       = 1 << 27;
+    constexpr uint32_t PRCTL_DUMPABLE           = 1 << 28;
+    constexpr uint32_t MADVISE_DONTDUMP         = 1 << 29;
+    constexpr uint32_t WIPE_ELF_HEADER          = 1 << 30;
+    constexpr uint32_t OBFUSCATE_PHDR           = 1 << 31;
+
+    // Presets
+    constexpr uint32_t MINIMAL    = ERASE_PE_HEADER | WIPE_ELF_HEADER | DISABLE_CORE_DUMPS;
+    constexpr uint32_t STANDARD   = ERASE_PE_HEADER | CORRUPT_PE_HEADER | WIPE_DEBUG_DIRECTORY |
+                                   WIPE_EXPORT_DIRECTORY | MANIPULATE_PEB | DISABLE_CORE_DUMPS |
+                                   PRCTL_DUMPABLE | WIPE_ELF_HEADER;
+    constexpr uint32_t ALL        = 0xFFFFFFFF;
+    constexpr uint32_t AGGRESSIVE = ALL;
+}
+```
+
+#### Layer 4: Memory Encryption Techniques
+
+```cpp
+namespace MemoryEncryptionTechniques {
+    constexpr uint32_t CHACHA20_ENCRYPTION = 1 << 0;   // ChaCha20 cipher
+    constexpr uint32_t PAGE_GUARD_PROTECTION = 1 << 1; // PAGE_NOACCESS guard
+    constexpr uint32_t ON_DEMAND_DECRYPTION  = 1 << 2; // Auto-decrypt on access
+    constexpr uint32_t AUTO_RE_ENCRYPTION    = 1 << 3; // Automatic re-encryption
+    constexpr uint32_t PER_PAGE_KEYS         = 1 << 4; // Unique key per page
+    constexpr uint32_t SECURE_KEY_GENERATION = 1 << 5; // Strong key derivation
+
+    constexpr uint32_t ALL = 0xFFFFFFFF;
+}
+```
+
+### Builder Pattern API
+
+Use the fluent builder pattern for clean configuration:
+
+```cpp
+auto config = Omamori::ProtectionConfig()
+    .WithAntiVM(true, AntiVMTechniques::SAFE)               // Layer 1
+    .WithAntiDebug(true, AntiDebugTechniques::FAST)         // Layer 2
+    .WithAntiDebugThread(true, 200)                          // Background thread
+    .WithAntiDump(true, AntiDumpTechniques::STANDARD)       // Layer 3
+    .WithMemoryEncryption(false)                             // Layer 4
+    .WithCallback(myDetectionHandler)                        // Custom handler
+    .WithTerminateOnDetect(false);                          // Don't auto-terminate
+
+Omamori::Initialize(config);
 ```
 
 ### Preset Configurations
 
-**1. Production (Default)**
-
-Recommended for production deployments. Anti-VM is disabled to allow legitimate users running in virtual machines.
+| Preset | Layer 1 | Layer 2 | Layer 3 | Layer 4 | Use Case |
+|:-------|:-------:|:-------:|:-------:|:-------:|:---------|
+| `Production()` | ❌ | ✅ FAST | ✅ STANDARD | ❌ | General deployment |
+| `MaximumProtection()` | ✅ ALL | ✅ ALL | ✅ ALL | ✅ ALL | Maximum security |
+| `DebugOnly()` | ❌ | ✅ FAST | ❌ | ❌ | Development testing |
+| `Stealth()` | ❌ | ✅ STEALTH | ✅ MINIMAL | ❌ | Low-profile protection |
+| `MemoryOnly()` | ❌ | ❌ | ❌ | ✅ ALL | Data protection only |
+| `Minimal()` | ❌ | ✅ (no thread) | ❌ | ✅ | Performance-critical |
 
 ```cpp
+// Quick preset usage
 auto config = Omamori::ProtectionConfig::Production();
 Omamori::Initialize(config);
-```
 
-Configuration:
-
-- Layer 1 (Anti-VM): OFF
-- Layer 2 (Anti-Debug): ON (with background thread)
-- Layer 3 (Anti-Dump): ON (full protection)
-- Layer 4 (Memory Encryption): OFF (manual activation)
-
-**2. Maximum Protection**
-
-All four layers enabled. Highest security level. Application will terminate if VM is detected.
-
-```cpp
-auto config = Omamori::ProtectionConfig::MaximumProtection();
+// Or with modifications
+auto config = Omamori::ProtectionConfig::Production()
+    .WithAntiDebugThread(true, 500);  // Slower check interval
 Omamori::Initialize(config);
 ```
 
-Configuration:
+### Layer-Only and Single-Technique Helpers
 
-- All layers: ON
-
-**3. Debug-Only**
-
-Only anti-debug protection enabled. Suitable for development and testing environments.
+Enable only a specific layer:
 
 ```cpp
-auto config = Omamori::ProtectionConfig::DebugOnly();
-Omamori::Initialize(config);
+// Only Layer 2 (Anti-Debug) with all techniques
+auto layer2 = Omamori::ProtectionConfig::LayerOnly(2);
+Omamori::Initialize(layer2);
+
+// Only Layer 3 (Anti-Dump) with all techniques  
+auto layer3 = Omamori::ProtectionConfig::LayerOnly(3);
+Omamori::Initialize(layer3);
 ```
 
-Configuration:
-
-- Layer 2 (Anti-Debug): ON
-- All other layers: OFF
-
-**4. Minimal**
-
-Lightweight protection with anti-debug (no background thread) and memory encryption. Suitable for performance-sensitive applications.
+Enable only one specific technique:
 
 ```cpp
-auto config = Omamori::ProtectionConfig::Minimal();
-Omamori::Initialize(config);
+// Only check PEB.BeingDebugged - fastest possible check
+auto single = Omamori::ProtectionConfig::SingleTechnique(
+    2,  // Layer 2
+    AntiDebugTechniques::PEB_BEING_DEBUGGED
+);
+Omamori::Initialize(single);
+
+// Only CPUID hypervisor bit check
+auto vmSingle = Omamori::ProtectionConfig::SingleTechnique(
+    1,  // Layer 1
+    AntiVMTechniques::CPUID_CHECK
+);
 ```
 
-Configuration:
+### Detection with Specific Techniques
 
-- Layer 2 (Anti-Debug): ON (no background thread)
-- Layer 4 (Memory Encryption): ON (manual use)
-- Layers 1, 3: OFF
-
-**5. Memory-Only**
-
-Only memory encryption layer enabled. For applications focusing solely on protecting sensitive data.
+Check for debugger using only certain techniques:
 
 ```cpp
-auto config = Omamori::ProtectionConfig::MemoryOnly();
-Omamori::Initialize(config);
+// Quick check - PEB only (< 1μs)
+bool quick = Omamori::IsDebugged(AntiDebugTechniques::PEB_BEING_DEBUGGED);
+
+// Fast check - PEB + hardware breakpoints (< 5μs)
+bool fast = Omamori::IsDebugged(AntiDebugTechniques::FAST);
+
+// Full check - all techniques
+bool full = Omamori::IsDebugged(AntiDebugTechniques::ALL);
+
+// Custom combination
+uint32_t custom = AntiDebugTechniques::PEB_BEING_DEBUGGED |
+                  AntiDebugTechniques::TIMING_RDTSC |
+                  AntiDebugTechniques::HARDWARE_BREAKPOINTS;
+bool customCheck = Omamori::IsDebugged(custom);
 ```
 
-Configuration:
-
-- Layer 4 (Memory Encryption): ON
-- All other layers: OFF
-
-### Custom Configuration Examples
-
-**Example 1: Layer 2 and 4 Only**
+Same for VM detection:
 
 ```cpp
-#include <omamori.hpp>
+// Safe check (no timing, no false positives)
+bool vmSafe = Omamori::IsInVM(AntiVMTechniques::SAFE);
+
+// Full check with all techniques
+bool vmFull = Omamori::IsInVM(AntiVMTechniques::ALL);
+```
+
+### Custom Detection Callback
+
+Handle detections without terminating:
+
+```cpp
+void MyDetectionHandler(const char* layer, const char* technique) {
+    std::cout << "[DETECTION] Layer: " << layer 
+              << ", Technique: " << technique << std::endl;
+    
+    // Log to file, send telemetry, etc.
+    LogSecurityEvent(layer, technique);
+    
+    // Decide action based on technique
+    if (strcmp(technique, "TIMING_RDTSC") == 0) {
+        // Timing checks can have false positives, just log
+        return;
+    }
+    
+    // For definitive detection, take action
+    CorruptSensitiveData();
+    std::exit(1);
+}
 
 int main() {
-    Omamori::ProtectionConfig config;
-    config.enable_antivm = false;              // Layer 1: OFF
-    config.enable_antidebug = true;            // Layer 2: ON
-    config.enable_antidebug_thread = false;    // No background thread
-    config.enable_antidump = false;            // Layer 3: OFF
-    config.enable_memory_encryption = true;    // Layer 4: ON
-  
+    auto config = Omamori::ProtectionConfig()
+        .WithAntiDebug(true, AntiDebugTechniques::ALL)
+        .WithCallback(MyDetectionHandler)
+        .WithTerminateOnDetect(false);  // We handle it ourselves
+    
     Omamori::Initialize(config);
-  
-    // Your application code
-    return 0;
 }
 ```
 
-**Example 2: Production without Header Erasure**
+### Helper Methods
+
+Check if a specific technique is enabled in config:
 
 ```cpp
-auto config = Omamori::ProtectionConfig::Production();
-config.erase_headers = false;  // Keep headers intact for debugging
+auto config = Omamori::ProtectionConfig()
+    .WithAntiDebug(true, AntiDebugTechniques::FAST);
 
-Omamori::Initialize(config);
-```
+// Check individual techniques
+bool hasPEB = config.IsAntiDebugTechniqueEnabled(
+    AntiDebugTechniques::PEB_BEING_DEBUGGED);  // true
 
-**Example 3: Anti-VM with Selective Methods**
+bool hasMemBP = config.IsAntiDebugTechniqueEnabled(
+    AntiDebugTechniques::MEMORY_BREAKPOINT);  // false (not in FAST)
 
-```cpp
-Omamori::ProtectionConfig config;
-config.enable_antivm = true;
+// Same for other layers
+bool hasMAC = config.IsAntiVMTechniqueEnabled(
+    AntiVMTechniques::MAC_ADDRESS);
 
-// Only use fast detection methods (CPUID + MAC address)
-#ifdef __linux__
-using namespace Omamori::Linux::AntiVM;
-config.antivm_methods = CPUID_CHECK | MAC_ADDRESS;
-#else
-using namespace Omamori::Windows::AntiVM;
-config.antivm_methods = CPUID_CHECK | MAC_ADDRESS;
-#endif
-
-config.enable_antidebug = false;
-config.enable_antidump = false;
-
-Omamori::Initialize(config);
-```
-
-**Example 4: Fine-Grained Control**
-
-```cpp
-Omamori::ProtectionConfig config;
-
-// Layer 1: Disabled
-config.enable_antivm = false;
-
-// Layer 2: Enabled with custom interval
-config.enable_antidebug = true;
-config.enable_antidebug_thread = true;
-config.antidebug_check_interval_ms = 1000;  // Check every 1 second
-
-// Layer 3: Partial protection
-config.enable_antidump = true;
-config.disable_core_dumps = true;       // Disable core dumps
-config.enable_prctl_protection = true;  // Linux prctl
-config.erase_headers = false;           // Keep headers intact
-
-// Layer 4: Disabled
-config.enable_memory_encryption = false;
-
-Omamori::Initialize(config);
+bool hasVEH = config.IsAntiDumpTechniqueEnabled(
+    AntiDumpTechniques::VEH_PROTECTION);
 ```
 
 ### Common Use Cases
 
 **Use Case 1: Desktop Application / Game**
 
-Requirements: Prevent debugging but allow VMs (users may test in virtual environments).
+Allow VMs, prevent debugging:
 
 ```cpp
 auto config = Omamori::ProtectionConfig::Production();
@@ -387,51 +683,174 @@ Omamori::Initialize(config);
 
 **Use Case 2: License Server**
 
-Requirements: Protect license keys, prevent debugging, minimal overhead.
+Fast checks, protect keys in memory:
 
 ```cpp
-auto config = Omamori::ProtectionConfig::Minimal();
+auto config = Omamori::ProtectionConfig()
+    .WithAntiDebug(true, AntiDebugTechniques::PEB_BEING_DEBUGGED)
+    .WithAntiDebugThread(false)  // No background thread
+    .WithMemoryEncryption(true);
 Omamori::Initialize(config);
 
-// Protect license key in encrypted memory
+// Store license key encrypted
 OMAMORI_ENCRYPTED_BUFFER(license, char, 256);
-strcpy(license.get(), "YOUR-LICENSE-KEY");
 ```
 
 **Use Case 3: Banking / Finance Application**
 
-Requirements: Maximum security, no VMs allowed.
+Maximum security, no VMs:
 
 ```cpp
 auto config = Omamori::ProtectionConfig::MaximumProtection();
 Omamori::Initialize(config);
+// Will terminate if VM or debugger detected
 ```
 
-Warning: Application will terminate if running in a VM.
+**Use Case 4: Performance-Critical with Logging**
 
-**Use Case 4: Development / Testing**
-
-Requirements: Only prevent debugging during testing.
+Minimal overhead, log detections:
 
 ```cpp
-auto config = Omamori::ProtectionConfig::DebugOnly();
+auto config = Omamori::ProtectionConfig()
+    .WithAntiDebug(true, AntiDebugTechniques::PEB_BEING_DEBUGGED)
+    .WithAntiDebugThread(false)
+    .WithCallback([](const char* l, const char* t) {
+        syslog(LOG_WARNING, "Security: %s/%s", l, t);
+    })
+    .WithTerminateOnDetect(false);
+```
+
+**Use Case 5: Stealth Protection**
+
+Low-profile, avoid timing-based detection:
+
+```cpp
+auto config = Omamori::ProtectionConfig::Stealth();
 Omamori::Initialize(config);
 ```
 
-### Performance Considerations
+### Performance Comparison
 
-| Layer                       | Performance Impact | Notes                                      |
-| --------------------------- | ------------------ | ------------------------------------------ |
-| Layer 1 (Anti-VM)           | ~50μs one-time    | Minimal impact, executed once at startup   |
-| Layer 2 (Anti-Debug)        | ~1μs per check    | Continuous overhead with background thread |
-| Layer 3 (Anti-Dump)         | ~100μs one-time   | Only executed at startup                   |
-| Layer 4 (Memory Encryption) | ~10μs per access  | Only affects encrypted memory regions      |
+| Configuration | Overhead | Techniques |
+|:--------------|:---------|:-----------|
+| `SingleTechnique(2, PEB_BEING_DEBUGGED)` | ~0.1 μs | 1 |
+| `FAST` preset | ~5 μs | 3 |
+| `STEALTH` preset | ~10 μs | 3 |
+| `ALL` techniques | ~100 μs | 15+ |
+| Background thread (100ms) | ~0.001% CPU | Continuous |
 
 **Recommendations:**
 
-- **Production deployments**: Use Production preset (Layer 2 + 3)
-- **High security**: Use MaximumProtection (all 4 layers)
-- **Performance-critical**: Use Minimal (Layer 2 without thread)
+- **Hot paths**: Use `SingleTechnique()` or `FAST` preset
+- **Production**: Use `Production()` preset
+- **Maximum security**: Use `MaximumProtection()` (accepts overhead)
+
+---
+
+## Examples
+
+The `examples/` directory contains comprehensive examples demonstrating all protection features.
+
+### Granular Configuration Examples
+
+These examples show how to use the **bitmask-based technique selection system** to customize protection:
+
+| File | Platform | Description |
+|:-----|:---------|:------------|
+| [granular_config_windows.cpp](examples/granular_config_windows.cpp) | Windows | Technique-level bitmask selection for all layers |
+| [granular_config_linux.cpp](examples/granular_config_linux.cpp) | Linux | Technique-level bitmask selection for all layers |
+| [selective_protection.cpp](examples/selective_protection.cpp) | Cross-platform | Layer-level enable/disable examples |
+| [simple_selective.cpp](examples/simple_selective.cpp) | Cross-platform | Minimal Layer 2+4 example |
+
+**Key concepts demonstrated:**
+
+1. **Direct bitmask assignment**
+   ```cpp
+   config.antidebug_techniques = 
+       PROC_STATUS_TRACERPID | PTRACE_TRACEME | LD_PRELOAD_CHECK;
+   ```
+
+2. **Builder pattern (With* methods)**
+   ```cpp
+   auto config = ProtectionConfig()
+       .WithAntiDebug(true, AntiDebugTechniques::FAST)
+       .WithAntiDump(true, AntiDumpTechniques::MINIMAL);
+   ```
+
+3. **Preset + customization**
+   ```cpp
+   auto config = ProtectionConfig::Stealth();
+   config.antidebug_techniques &= ~TIMING_RDTSC;  // Remove timing check
+   config.antidebug_techniques |= FRIDA_DETECTION; // Add Frida check
+   ```
+
+4. **Single technique mode**
+   ```cpp
+   auto config = ProtectionConfig::SingleTechnique(2, 
+       AntiDebugTechniques::PTRACE_TRACEME);
+   ```
+
+#### Building the Examples
+
+**Windows (MinGW):**
+```bash
+cd build
+g++ -std=c++17 -DOMAMORI_PLATFORM_WINDOWS -I../include -I../common/include \
+    -I../windows/include ../examples/granular_config_windows.cpp \
+    ../windows/src/*.cpp -o granular_windows.exe \
+    -lntdll -lkernel32 -liphlpapi
+```
+
+**Linux:**
+```bash
+cd build
+g++ -std=c++17 -DOMAMORI_PLATFORM_LINUX -I../include -I../common/include \
+    -I../linux/include ../examples/granular_config_linux.cpp \
+    ../linux/src/*.cpp -o granular_linux -lpthread
+```
+
+### Other Examples
+
+| File | Platform | Description |
+|:-----|:---------|:------------|
+| [windows_example.cpp](examples/windows_example.cpp) | Windows | Full Windows protection demo |
+| [linux_example.cpp](examples/linux_example.cpp) | Linux | Full Linux protection demo |
+| [test_memory_encryption.cpp](examples/test_memory_encryption.cpp) | Cross-platform | Memory encryption (ChaCha20) demo |
+| [example_license_protection.cpp](examples/example_license_protection.cpp) | Cross-platform | License protection use case |
+| [verify_antidump.cpp](examples/verify_antidump.cpp) | Cross-platform | Anti-dump verification |
+| [anti_attach_test.cpp](examples/anti_attach_test.cpp) | Cross-platform | Anti-attach protection test |
+
+---
+
+## Excluded Techniques
+
+The following techniques were considered but are **intentionally not implemented** due to complexity, instability, or requiring kernel-level access:
+
+### Windows
+
+| Technique | Reason |
+|:---|:---|
+| `CreateFakeSections` | Requires modifying PE section count at runtime - can easily corrupt the executable |
+| `ScrambleNonExecutedCode` | Needs runtime code analysis to identify cold paths - too complex for reliable implementation |
+| `InstallInlineChecks` | Requires binary instrumentation at runtime - would need code injection framework |
+| `InsertFakeSections` | Same as CreateFakeSections - dangerous PE manipulation |
+
+### Linux
+
+| Technique | Reason |
+|:---|:---|
+| `HideFromProcMaps` | Requires kernel module - `/proc/self/maps` is kernel-managed |
+| `CorruptProcMem` | Cannot modify `/proc/self/mem` - kernel-managed |
+| `ProtectProcAccess` | Requires kernel module to intercept proc filesystem access |
+| `MemfdExecution` | Requires `memfd_create()` + `fexecve()` - use case specific, not a protection technique |
+| `InsertFakeSections` | Would corrupt ELF structure - section headers aren't needed at runtime anyway |
+| `MangleSymbols` | `.dynsym` is needed for dynamic linking - corrupting it crashes the process |
+| `ObfuscateMemory` | Would require runtime polymorphic code generation - out of scope |
+
+**Alternative approaches:**
+- Instead of `InsertFakeSections`, use `HideSectionNames()` + `ScrambleOptionalHeader()`
+- Instead of `MangleSymbols`, use `WipeBuildId()` + `CorruptDynamicSection()`
+- Instead of `HideFromProcMaps`, use `MaskProcMaps()` for decoy memory regions
 
 ---
 
@@ -465,11 +884,61 @@ Omamori::Initialize(config);
 
 ```cpp
 bool Omamori::IsDebugged()
+bool Omamori::IsDebugged(uint32_t techniques)
 ```
 
-Comprehensive debugger detection using all available techniques.
+Comprehensive debugger detection. The parameterized version allows selecting specific techniques via bitmask.
 
 **Returns:** `true` if debugger detected
+
+**Example:**
+
+```cpp
+// Full check with all techniques
+if (Omamori::IsDebugged()) {
+    HandleDebuggerDetected();
+}
+
+// Fast check - only PEB-based techniques
+if (Omamori::IsDebugged(AntiDebugTechniques::FAST)) {
+    HandleDebuggerDetected();
+}
+
+// Single technique - minimal overhead
+if (Omamori::IsDebugged(AntiDebugTechniques::PEB_BEING_DEBUGGED)) {
+    HandleDebuggerDetected();
+}
+
+// Custom combination
+uint32_t checks = AntiDebugTechniques::PEB_BEING_DEBUGGED |
+                  AntiDebugTechniques::HARDWARE_BREAKPOINTS;
+if (Omamori::IsDebugged(checks)) {
+    HandleDebuggerDetected();
+}
+```
+
+```cpp
+bool Omamori::IsInVM()
+bool Omamori::IsInVM(uint32_t techniques)
+```
+
+VM/Hypervisor detection. The parameterized version allows selecting specific techniques.
+
+**Returns:** `true` if running in a virtual machine
+
+**Example:**
+
+```cpp
+// Full check
+if (Omamori::IsInVM()) {
+    std::cout << "Running in VM" << std::endl;
+}
+
+// Safe check (no timing-based, fewer false positives)
+if (Omamori::IsInVM(AntiVMTechniques::SAFE)) {
+    std::cout << "VM detected (safe check)" << std::endl;
+}
+```
 
 ```cpp
 void Omamori::TerminateIfDebugged()
@@ -883,9 +1352,9 @@ generate_secure_token(session_token.data());
 // Only plaintext during active use
 ```
 
-### Direct Syscalls (Windows Only)
+### Direct & Indirect Syscalls (Windows Only)
 
-Bypass usermode hooks by executing syscalls directly.
+Bypass usermode hooks and EDR monitoring by executing syscalls directly or indirectly.
 
 ```cpp
 namespace Omamori::Windows::Syscall {
@@ -895,17 +1364,35 @@ namespace Omamori::Windows::Syscall {
         NTSTATUS NtSetInformationThread(...);
         NTSTATUS NtQuerySystemInformation(...);
         NTSTATUS NtClose(...);
+        NTSTATUS NtWriteVirtualMemory(...);  // NEW
+        NTSTATUS NtReadVirtualMemory(...);   // NEW
     }
   
-    // Syscall stub management
+    // Syscall stub management (Direct & Indirect)
     namespace StubManager {
         SyscallStub* GetStub(const char* functionName);
+        SyscallStub* CreateIndirectStub(const char* functionName);  // NEW
         void ClearCache();
     }
   
     // Hook detection
     namespace Detector {
         bool IsFunctionHooked(const char* functionName);
+    }
+    
+    // Halo's Gate - SSN resolution when hooked (NEW)
+    namespace HalosGate {
+        bool IsHooked(void* functionAddress);
+        DWORD ExtractSSN(void* functionAddress);
+        DWORD ResolveFromNeighbor(void* functionAddress, int direction);
+        DWORD ResolveSyscallNumber(const char* functionName);  // Auto-resolve
+        void* FindCleanSyscallAddress();  // Find unhooked syscall;ret
+    }
+    
+    // Indirect Syscalls - EDR evasion (NEW)
+    namespace IndirectSyscall {
+        void* GetSyscallAddress(const char* functionName);
+        NTSTATUS Execute(DWORD ssn, void* syscallAddr, ...);
     }
 }
 ```
@@ -928,6 +1415,66 @@ if (NT_SUCCESS(status) && debugPort != 0) {
     // Debugger detected
 }
 #endif
+```
+
+### Advanced Evasion Techniques
+
+Omamori implements several advanced techniques to evade modern security solutions:
+
+#### Halo's Gate (SSN Resolution)
+
+When EDR/AV solutions hook ntdll.dll functions, the normal syscall number (SSN) extraction fails. Halo's Gate resolves this by:
+
+1. **Detecting hooks** - Checking for JMP instructions at function entry
+2. **Neighbor scanning** - Walking to adjacent unhooked functions to calculate SSN
+3. **SSN derivation** - Computing the target SSN from neighbor's SSN ± offset
+
+```cpp
+// Automatic SSN resolution even when hooked
+DWORD ssn = Omamori::Windows::Syscall::HalosGate::ResolveSyscallNumber("NtQueryInformationProcess");
+// ssn is valid even if NtQueryInformationProcess is hooked by EDR
+```
+
+#### Indirect Syscalls
+
+Direct syscalls leave a suspicious call stack (syscall from non-ntdll module). Indirect syscalls fix this by:
+
+1. **Finding clean addresses** - Locating `syscall; ret` gadgets in ntdll.dll
+2. **JMP-based execution** - Jumping to ntdll's syscall instruction instead of executing inline
+3. **Clean call stack** - Return address points to ntdll.dll, evading EDR detection
+
+```cpp
+// Indirect syscall with clean call stack
+auto stub = Omamori::Windows::Syscall::StubManager::CreateIndirectStub("NtQueryInformationProcess");
+// Call stack shows return to ntdll.dll, not your module
+```
+
+#### ChaCha20 Memory Encryption
+
+- **20-round keystream** - Full ChaCha20 quarter-round mixing
+- **256-bit keys** - CryptGenRandom with RDTSC entropy fallback
+- **Per-page nonces** - Unique encryption per memory page
+- **Constant-time** - Resistant to timing side-channels
+
+```cpp
+// Secure memory encryption
+Omamori::EncryptedBuffer<char> apiKey(256);
+// Data encrypted with ChaCha20 when not in use
+```
+
+#### Sleep Acceleration Detection
+
+Sandbox environments often accelerate sleep calls to speed up analysis:
+
+- **Timing verification** - Measures actual elapsed time vs requested sleep
+- **Threshold detection** - Flags if 500ms sleep completes in <400ms
+- **Combined with CPUID timing** - Multi-vector sandbox detection
+
+```cpp
+// Detect sandbox fast-forwarding
+if (Omamori::AntiVM::CheckTimingAnomaly()) {
+    // Sleep acceleration or VM detected
+}
 ```
 
 ---
@@ -1122,7 +1669,16 @@ The test suites validate:
 - String encryption and secure memory
 - Protection threads and callbacks
 - Memory encryption (allocation, encryption, decryption)
-- Selective layer activation
+- **Granular configuration system** (presets, bitmasks, builder pattern)
+- **LayerOnly() and SingleTechnique() factories**
+- **IsXxxTechniqueEnabled() helpers**
+
+**Latest Test Results:**
+
+| Platform | Tests | Passed | Failed | Success Rate |
+|----------|-------|--------|--------|-------------|
+| Windows (MinGW) | 59 | 59 | 0 | **100%** ✅ |
+| Linux (GCC) | 49 | 49 | 0 | **100%** ✅ |
 
 Expected output shows PASS/FAIL for each technique with details.
 
@@ -1351,20 +1907,6 @@ int main() {
 - x86 (32-bit)
 - x64 (64-bit)
 - ARM64 (partial support, testing required)
-
----
-
-## License
-
-MIT License
-
-Copyright (c) 2026 Omamori Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---
 

@@ -4,14 +4,26 @@
 #include <sys/mman.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <random>
+#include <chrono>
 
 namespace Omamori {
 namespace MemoryEncryption {
 
 // ============================================================================
-// StreamCipher Implementation
+// ChaCha20 StreamCipher Implementation (Aligned with Windows)
 // ============================================================================
+
+// Quarter round for ChaCha20
+#define ROTL32(v, n) (((v) << (n)) | ((v) >> (32 - (n))))
+
+static inline void QuarterRound(uint32_t& a, uint32_t& b, uint32_t& c, uint32_t& d) {
+    a += b; d ^= a; d = ROTL32(d, 16);
+    c += d; b ^= c; b = ROTL32(b, 12);
+    a += b; d ^= a; d = ROTL32(d, 8);
+    c += d; b ^= c; b = ROTL32(b, 7);
+}
 
 StreamCipher::StreamCipher() : nonce_(0), counter_(0) {
     GenerateKey(key_, sizeof(key_));
@@ -28,68 +40,115 @@ StreamCipher::StreamCipher(const uint8_t* key, size_t keySize)
 }
 
 void StreamCipher::GenerateKey(uint8_t* key, size_t keySize) {
+    // Try /dev/urandom first (most secure)
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        ssize_t bytesRead = read(fd, key, keySize);
+        close(fd);
+        if (bytesRead == static_cast<ssize_t>(keySize)) {
+            return;
+        }
+    }
+    
+    // Fallback to std::random_device + RDTSC-like entropy
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint8_t> dis(0, 255);
+    
+    // Mix with additional entropy sources
+    uint64_t extraEntropy = 0;
+    
+    // Use clock_gettime for additional entropy
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        extraEntropy ^= static_cast<uint64_t>(ts.tv_nsec);
+        extraEntropy ^= static_cast<uint64_t>(ts.tv_sec) << 32;
+    }
+    
+    // Mix with process info
+    extraEntropy ^= static_cast<uint64_t>(getpid()) << 16;
+    extraEntropy ^= static_cast<uint64_t>(getppid()) << 24;
+    
+    gen.seed(gen() ^ extraEntropy);
     
     for (size_t i = 0; i < keySize; ++i) {
-        key[i] = dis(gen);
+        key[i] = static_cast<uint8_t>(gen() & 0xFF);
     }
 }
 
 void StreamCipher::Encrypt(uint8_t* data, size_t size) {
     XorKeystream(data, size);
-    counter_ += size;
 }
 
 void StreamCipher::Decrypt(uint8_t* data, size_t size) {
-    // XOR è simmetrico: decrypt = encrypt
+    // XOR is symmetric: decrypt = encrypt
     XorKeystream(data, size);
-    counter_ += size;
 }
 
 void StreamCipher::Reset() {
     counter_ = 0;
-    nonce_++;
+    nonce_ = 0;
 }
 
 void StreamCipher::XorKeystream(uint8_t* data, size_t size) {
-    // Simple XOR stream cipher (ChaCha20-like)
-    // Per production: usa ChaCha20 reale
-    
+    // ChaCha20-like keystream generation
     uint8_t keystream[64];
-    size_t offset = 0;
+    size_t keystreamPos = 64;  // Force generation on first use
     
-    while (offset < size) {
-        GenerateKeystream(keystream, sizeof(keystream));
-        
-        size_t chunkSize = (size - offset < sizeof(keystream)) 
-                          ? (size - offset) 
-                          : sizeof(keystream);
-        
-        for (size_t i = 0; i < chunkSize; ++i) {
-            data[offset + i] ^= keystream[i];
+    for (size_t i = 0; i < size; i++) {
+        if (keystreamPos >= 64) {
+            GenerateKeystream(keystream, 64);
+            keystreamPos = 0;
+            counter_++;
         }
-        
-        offset += chunkSize;
+        data[i] ^= keystream[keystreamPos++];
     }
 }
 
 void StreamCipher::GenerateKeystream(uint8_t* stream, size_t size) {
-    // Semplificato: combina key + nonce + counter
-    // Per production: implementa ChaCha20 completo
+    // ChaCha20 state initialization
+    uint32_t state[16];
     
-    for (size_t i = 0; i < size; ++i) {
-        uint64_t mix = counter_ + nonce_ + i;
-        
-        // Mix con key
-        for (size_t k = 0; k < sizeof(key_); ++k) {
-            mix ^= static_cast<uint64_t>(key_[k]) << ((k % 8) * 8);
-            mix = (mix << 13) | (mix >> 51); // Rotate
-        }
-        
-        stream[i] = static_cast<uint8_t>(mix & 0xFF);
+    // "expand 32-byte k" constant
+    state[0] = 0x61707865;
+    state[1] = 0x3320646e;
+    state[2] = 0x79622d32;
+    state[3] = 0x6b206574;
+    
+    // Key (8 words = 32 bytes)
+    std::memcpy(&state[4], key_, 32);
+    
+    // Counter and nonce
+    state[12] = static_cast<uint32_t>(counter_);
+    state[13] = static_cast<uint32_t>(counter_ >> 32);
+    state[14] = static_cast<uint32_t>(nonce_);
+    state[15] = static_cast<uint32_t>(nonce_ >> 32);
+    
+    // Working state
+    uint32_t working[16];
+    std::memcpy(working, state, sizeof(state));
+    
+    // 20 rounds (10 double rounds)
+    for (int i = 0; i < 10; i++) {
+        // Column rounds
+        QuarterRound(working[0], working[4], working[8],  working[12]);
+        QuarterRound(working[1], working[5], working[9],  working[13]);
+        QuarterRound(working[2], working[6], working[10], working[14]);
+        QuarterRound(working[3], working[7], working[11], working[15]);
+        // Diagonal rounds
+        QuarterRound(working[0], working[5], working[10], working[15]);
+        QuarterRound(working[1], working[6], working[11], working[12]);
+        QuarterRound(working[2], working[7], working[8],  working[13]);
+        QuarterRound(working[3], working[4], working[9],  working[14]);
     }
+    
+    // Add original state
+    for (int i = 0; i < 16; i++) {
+        working[i] += state[i];
+    }
+    
+    // Output
+    size_t outSize = size < 64 ? size : 64;
+    std::memcpy(stream, working, outSize);
 }
 
 // ============================================================================
@@ -107,6 +166,10 @@ EncryptionManager::EncryptionManager()
     : initialized_(false)
     , autoReEncrypt_(true)
     , decryptTimeoutMs_(100)
+    , reencryptRunning_(false)
+    , signalPagesHead_(nullptr)
+    , signalPageFaults_(0)
+    , signalDecryptOperations_(0)
 {
     std::memset(&stats_, 0, sizeof(stats_));
     StreamCipher::GenerateKey(masterKey_, sizeof(masterKey_));
@@ -125,12 +188,18 @@ bool EncryptionManager::Initialize() {
     
     // Install signal handler per page faults
     InstallHandlers();
+
+    if (autoReEncrypt_) {
+        StartReencryptThread();
+    }
     
     initialized_ = true;
     return true;
 }
 
 void EncryptionManager::Shutdown() {
+    StopReencryptThread();
+
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (!initialized_) {
@@ -145,6 +214,8 @@ void EncryptionManager::Shutdown() {
     }
     
     pages_.clear();
+    retiredPages_.clear();
+    signalPagesHead_.store(nullptr, std::memory_order_release);
     
     RemoveHandlers();
     initialized_ = false;
@@ -202,9 +273,10 @@ void EncryptionManager::FreeEncrypted(void* ptr) {
 }
 
 bool EncryptionManager::EncryptRegion(void* address, size_t size) {
+    (void)size;
     std::lock_guard<std::mutex> lock(mutex_);
     
-    EncryptedPage* page = FindPage(address);
+    EncryptedPage* page = FindPageUnsafe(address);
     if (!page) {
         return false;
     }
@@ -218,9 +290,10 @@ bool EncryptionManager::EncryptRegion(void* address, size_t size) {
 }
 
 bool EncryptionManager::DecryptRegion(void* address, size_t size) {
+    (void)size;
     std::lock_guard<std::mutex> lock(mutex_);
     
-    EncryptedPage* page = FindPage(address);
+    EncryptedPage* page = FindPageUnsafe(address);
     if (!page) {
         return false;
     }
@@ -265,12 +338,25 @@ bool EncryptionManager::RegisterPage(void* address, size_t size) {
     page->size = size;
     page->encrypted = false;
     page->accessCount = 0;
+    page->lastDecryptedNs = 0;
+    page->next = nullptr;
+    page->active = true;
     
-    // Inizializza cipher con master key
-    page->cipher = StreamCipher(masterKey_, sizeof(masterKey_));
+    // Generate unique per-page key (aligned with Windows implementation)
+    uint8_t pageKey[32];
+    StreamCipher::GenerateKey(pageKey, 32);
+    page->cipher = StreamCipher(pageKey, 32);
     
     pages_[address] = std::move(page);
     stats_.totalPages++;
+
+    // Publish to signal-safe list
+    EncryptedPage* published = pages_[address].get();
+    EncryptedPage* head = signalPagesHead_.load(std::memory_order_relaxed);
+    do {
+        published->next = head;
+    } while (!signalPagesHead_.compare_exchange_weak(
+        head, published, std::memory_order_release, std::memory_order_relaxed));
     
     return true;
 }
@@ -283,13 +369,22 @@ bool EncryptionManager::UnregisterPage(void* address) {
         return false;
     }
     
+    it->second->active = false;
+    retiredPages_.push_back(std::move(it->second));
     pages_.erase(it);
     stats_.totalPages--;
     return true;
 }
 
 EncryptedPage* EncryptionManager::FindPage(void* address) {
-    // Lock già acquisito dal chiamante
+    // Thread-safe version with lock
+    std::lock_guard<std::mutex> lock(mutex_);
+    return FindPageUnsafe(address);
+}
+
+EncryptedPage* EncryptionManager::FindPageUnsafe(void* address) {
+    // Lock-free version for signal handler context
+    // IMPORTANT: Only safe when called from signal handler or with lock held
     
     auto it = pages_.find(address);
     if (it != pages_.end()) {
@@ -308,6 +403,22 @@ EncryptedPage* EncryptionManager::FindPage(void* address) {
         }
     }
     
+    return nullptr;
+}
+
+EncryptedPage* EncryptionManager::FindPageSignalSafe(void* address) {
+    uintptr_t addr = reinterpret_cast<uintptr_t>(address);
+    EncryptedPage* current = signalPagesHead_.load(std::memory_order_acquire);
+    while (current) {
+        if (current->active) {
+            uintptr_t start = reinterpret_cast<uintptr_t>(current->address);
+            uintptr_t end = start + current->size;
+            if (addr >= start && addr < end) {
+                return current;
+            }
+        }
+        current = current->next;
+    }
     return nullptr;
 }
 
@@ -332,9 +443,10 @@ void EncryptionManager::DecryptPage(EncryptedPage* page) {
     uint8_t* data = static_cast<uint8_t*>(page->address);
     page->cipher.Decrypt(data, page->size);
     page->encrypted = false;
+    page->lastDecryptedNs = GetTimeNs();
     
     stats_.decryptOperations++;
-    stats_.encryptedPages--;
+    if (stats_.encryptedPages > 0) stats_.encryptedPages--;
 }
 
 void EncryptionManager::InstallHandlers() {
@@ -359,8 +471,8 @@ void EncryptionManager::SigSegvHandler(int sig, siginfo_t* info, void* context) 
     
     EncryptionManager& manager = EncryptionManager::GetInstance();
     
-    // Trova pagina corrispondente
-    EncryptedPage* page = manager.FindPage(faultAddr);
+    // Trova pagina corrispondente (signal-safe traversal)
+    EncryptedPage* page = manager.FindPageSignalSafe(faultAddr);
     
     if (page && page->encrypted) {
         // DECRYPTION ON-DEMAND
@@ -368,16 +480,20 @@ void EncryptionManager::SigSegvHandler(int sig, siginfo_t* info, void* context) 
         // Unprotect temporaneamente
         mprotect(page->address, page->size, PROT_READ | PROT_WRITE);
         
-        // Decrypt
-        manager.DecryptPage(page);
+        // Decrypt in-place (lock-free operation)
+        uint8_t* data = static_cast<uint8_t*>(page->address);
+        page->cipher.Decrypt(data, page->size);
+        page->encrypted = false;
+        page->lastDecryptedNs = GetTimeNs();
         
         page->accessCount++;
-        manager.stats_.pageFaults++;
+        manager.signalPageFaults_.fetch_add(1, std::memory_order_relaxed);
+        manager.signalDecryptOperations_.fetch_add(1, std::memory_order_relaxed);
         
         // Se auto-reencrypt abilitato, schedule re-encryption
         if (manager.autoReEncrypt_) {
             // TODO: Schedule timer per re-encrypt dopo timeout
-            // Per ora lascia decifrato fino al prossimo access
+            // Per ora lascia decifrato fino al prossimo ProtectAndEncrypt
         }
         
         // Handler gestito, ritorna
@@ -397,7 +513,70 @@ void EncryptionManager::SigSegvHandler(int sig, siginfo_t* info, void* context) 
 }
 
 EncryptionManager::Stats EncryptionManager::GetStats() const {
-    return stats_;
+    Stats snapshot = stats_;
+    snapshot.pageFaults += signalPageFaults_.load(std::memory_order_relaxed);
+    snapshot.decryptOperations += signalDecryptOperations_.load(std::memory_order_relaxed);
+    return snapshot;
+}
+
+uint64_t EncryptionManager::GetTimeNs() {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+        return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
+               static_cast<uint64_t>(ts.tv_nsec);
+    }
+    return 0;
+}
+
+void EncryptionManager::StartReencryptThread() {
+    if (reencryptRunning_) {
+        return;
+    }
+
+    reencryptRunning_ = true;
+    reencryptThread_ = std::thread(&EncryptionManager::ReencryptLoop, this);
+}
+
+void EncryptionManager::StopReencryptThread() {
+    if (!reencryptRunning_) {
+        return;
+    }
+
+    reencryptRunning_ = false;
+    if (reencryptThread_.joinable()) {
+        reencryptThread_.join();
+    }
+}
+
+void EncryptionManager::ReencryptLoop() {
+    while (reencryptRunning_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(decryptTimeoutMs_));
+
+        if (!autoReEncrypt_) {
+            continue;
+        }
+
+        const uint64_t now = GetTimeNs();
+        if (now == 0) {
+            continue;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& pair : pages_) {
+            EncryptedPage* page = pair.second.get();
+            if (!page || page->encrypted || page->lastDecryptedNs == 0) {
+                continue;
+            }
+
+            uint64_t elapsedNs = now - page->lastDecryptedNs;
+            if (elapsedNs < static_cast<uint64_t>(decryptTimeoutMs_) * 1000000ULL) {
+                continue;
+            }
+
+            EncryptPage(page);
+            mprotect(page->address, page->size, PROT_NONE);
+        }
+    }
 }
 
 } // namespace MemoryEncryption

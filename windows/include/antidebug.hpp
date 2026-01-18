@@ -15,15 +15,18 @@ enum DetectionMethod : uint32_t {
     HARDWARE_BREAKPOINTS     = 0x00000010,
     TIMING_RDTSC             = 0x00000020,
     TIMING_QPC               = 0x00000040,
-    EXCEPTION_BASED          = 0x00000080,
-    PROCESS_DEBUG_PORT       = 0x00000100,
-    PROCESS_DEBUG_FLAGS      = 0x00000200,
-    DEBUG_OBJECT_HANDLE      = 0x00000400,
-    SYSTEM_KERNEL_DEBUGGER   = 0x00000800,
-    CLOSE_HANDLE_EXCEPTION   = 0x00001000,
-    OUTPUT_DEBUG_STRING      = 0x00002000,
-    PARENT_PROCESS_CHECK     = 0x00004000,
-    SEDEBUGRPRIVILEGE        = 0x00008000,
+    PROCESS_DEBUG_PORT       = 0x00000080,
+    PROCESS_DEBUG_FLAGS      = 0x00000100,
+    DEBUG_OBJECT_HANDLE      = 0x00000200,
+    SYSTEM_KERNEL_DEBUGGER   = 0x00000400,
+    CLOSE_HANDLE_EXCEPTION   = 0x00000800,
+    OUTPUT_DEBUG_STRING      = 0x00001000,
+    PARENT_PROCESS_CHECK     = 0x00002000,
+    // Advanced techniques
+    INT_2D_CHECK             = 0x00004000,  // INT 2D interrupt check
+    DEBUG_FILTER_STATE       = 0x00008000,  // NtSetDebugFilterState
+    THREAD_CONTEXT_CHECK     = 0x00010000,  // Thread context manipulation
+    MEMORY_BREAKPOINT        = 0x00020000,  // Memory breakpoint detection
     ALL_CHECKS               = 0xFFFFFFFF
 };
 
@@ -56,6 +59,12 @@ private:
     static bool CheckKernelDebugger();
     static bool CheckParentProcess();
     
+    // Advanced techniques (NEW)
+    static bool CheckInt2D();                  // INT 2D interrupt check
+    static bool CheckDebugFilterState();       // NtSetDebugFilterState check
+    static bool CheckThreadContextManipulation(); // Thread context check
+    static bool CheckMemoryBreakpoints();      // Memory breakpoint detection
+    
 public:
     // Main detection function
     static bool IsDebuggerPresent(uint32_t methods = ALL_CHECKS);
@@ -64,6 +73,11 @@ public:
     static void HideThreadFromDebugger();
     static void TerminateIfDebugged();
     static bool EnableAntiDebug();
+    
+    // Advanced evasion functions (NEW)
+    static bool PatchETW();                    // Patch ETW to disable tracing
+    static bool PatchAMSI();                   // Patch AMSI to bypass scanning
+    static bool DisableDebugFilters();         // Disable debug output filters
 };
 
 // RAII Timing Guard for anti-debug timing checks

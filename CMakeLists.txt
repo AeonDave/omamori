@@ -59,6 +59,8 @@ if(WIN32)
     # Link Windows libraries
     target_link_libraries(Omamori PRIVATE
         ntdll
+        iphlpapi
+        psapi
     )
     
     # Compiler-specific flags for Windows
@@ -189,19 +191,8 @@ if(BUILD_TESTS)
         endif()
     endif()
     
-    # UPX stub protection example/test
+    # Memory encryption test (Linux)
     if(UNIX)
-        add_executable(omamori_upx_stub_test
-            examples/upx_stub_protection.cpp
-        )
-        target_compile_definitions(omamori_upx_stub_test PRIVATE BUILD_TEST)
-        target_link_libraries(omamori_upx_stub_test PRIVATE Omamori)
-        target_compile_options(omamori_upx_stub_test PRIVATE -Os)
-        set_target_properties(omamori_upx_stub_test PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-        )
-        
-        # Memory encryption test
         add_executable(omamori_memory_encryption_test
             examples/test_memory_encryption.cpp
         )

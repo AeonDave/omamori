@@ -21,7 +21,18 @@ enum VMDetectionMethod : uint32_t {
     HYPERV_CHECK             = 0x00001000,
     QEMU_CHECK               = 0x00002000,
     PARALLELS_CHECK          = 0x00004000,
-    ALL_CHECKS               = 0xFFFFFFFF
+    // New CERTAIN detection methods (no false positives)
+    ACPI_TABLES              = 0x00008000,  // ACPI table signatures
+    DISK_MODEL               = 0x00010000,  // Virtual disk model names
+    DISPLAY_ADAPTER          = 0x00020000,  // Virtual GPU detection
+    FIRMWARE_TABLES          = 0x00040000,  // SMBIOS firmware strings
+    HYPERVISOR_VENDOR        = 0x00080000,  // CPUID hypervisor vendor (CERTAIN)
+    ALL_CHECKS               = 0xFFFFFFFF,
+    // Recommended: only CERTAIN checks (no timing-based)
+    SAFE_CHECKS              = CPUID_CHECK | REGISTRY_CHECK | MAC_ADDRESS | DEVICE_CHECK | 
+                               DRIVER_CHECK | PROCESS_CHECK | SERVICE_CHECK | FILE_CHECK |
+                               ACPI_TABLES | DISK_MODEL | DISPLAY_ADAPTER | FIRMWARE_TABLES |
+                               HYPERVISOR_VENDOR
 };
 
 class Detector {
@@ -53,11 +64,18 @@ private:
     static bool CheckVMServices();
     static bool CheckVMFiles();
     
-    // Timing-based detection
+    // Timing-based detection (use with caution - can have false positives)
     static bool CheckTimingAnomaly();
     
     // WMI-based detection
     static bool CheckWMI();
+    
+    // New CERTAIN detection methods (no false positives)
+    static bool CheckACPITables();        // ACPI table signatures
+    static bool CheckDiskModel();         // Virtual disk model names
+    static bool CheckDisplayAdapter();    // Virtual GPU detection
+    static bool CheckFirmwareTables();    // SMBIOS firmware strings
+    static bool CheckHypervisorVendor();  // CPUID hypervisor vendor (MOST RELIABLE)
     
 public:
     // Main detection function

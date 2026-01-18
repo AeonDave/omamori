@@ -12,13 +12,13 @@ void example_production_config() {
     std::cout << "Layers: Anti-Debug + Anti-Dump (NO Anti-VM)" << std::endl;
     
     // Production preset: Disables anti-VM by default
-    // Also disable header erasure to avoid segfault in examples
+    // Use MINIMAL techniques to avoid aggressive header corruption
     auto config = Omamori::ProtectionConfig::Production();
-    config.erase_headers = false;  // Don't corrupt headers in examples
+    config.antidump_techniques = Omamori::AntiDumpTechniques::MINIMAL;
     
     std::cout << "  Layer 1 (Anti-VM):       " << (config.enable_antivm ? "ON" : "OFF") << std::endl;
     std::cout << "  Layer 2 (Anti-Debug):    " << (config.enable_antidebug ? "ON" : "OFF") << std::endl;
-    std::cout << "  Layer 3 (Anti-Dump):     " << (config.enable_antidump ? "ON (no header erase)" : "OFF") << std::endl;
+    std::cout << "  Layer 3 (Anti-Dump):     " << (config.enable_antidump ? "ON (minimal)" : "OFF") << std::endl;
     std::cout << "  Layer 4 (Mem Encrypt):   " << (config.enable_memory_encryption ? "ON" : "OFF") << std::endl;
     
     Omamori::Initialize(config);
@@ -71,7 +71,7 @@ void example_debug_only() {
 
 void example_custom_granular() {
     std::cout << "\n=== Example 4: Granular Custom Configuration ===" << std::endl;
-    std::cout << "Layers: Anti-Debug (no thread) + Anti-Dump (headers only)" << std::endl;
+    std::cout << "Layers: Anti-Debug (no thread) + Anti-Dump (minimal)" << std::endl;
     
     Omamori::ProtectionConfig config;
     
@@ -82,17 +82,15 @@ void example_custom_granular() {
     config.enable_antidebug = true;
     config.enable_antidebug_thread = false;
     
-    // Layer 3: Partial - only header erasure, no core dump disable
+    // Layer 3: Partial - use MINIMAL techniques (no aggressive header corruption)
     config.enable_antidump = true;
-    config.erase_headers = true;
-    config.disable_core_dumps = false;
-    config.enable_prctl_protection = false;
+    config.antidump_techniques = Omamori::AntiDumpTechniques::MINIMAL;
     
     // Layer 4: Disabled
     config.enable_memory_encryption = false;
     
     std::cout << "  Anti-Debug: ON (one-time check)" << std::endl;
-    std::cout << "  Anti-Dump:  Partial (headers only)" << std::endl;
+    std::cout << "  Anti-Dump:  Partial (minimal techniques)" << std::endl;
     
     Omamori::Initialize(config);
     std::cout << "✓ Custom protection initialized" << std::endl;
@@ -119,13 +117,10 @@ void example_antivm_with_selective_methods() {
     Omamori::ProtectionConfig config;
     config.enable_antivm = true;
     
-    #if defined(OMAMORI_PLATFORM_LINUX)
-    using namespace Omamori::Linux::AntiVM;
-    config.antivm_methods = CPUID_CHECK | MAC_ADDRESS;  // Only 2 methods
-    #elif defined(OMAMORI_PLATFORM_WINDOWS)
-    using namespace Omamori::Windows::AntiVM;
-    config.antivm_methods = CPUID_CHECK | MAC_ADDRESS;
-    #endif
+    // Use central config flags - these work on both platforms
+    config.antivm_techniques = 
+        Omamori::AntiVMTechniques::CPUID_CHECK | 
+        Omamori::AntiVMTechniques::MAC_ADDRESS;  // Only 2 methods
     
     config.enable_antidebug = false;
     config.enable_antidump = false;

@@ -1,6 +1,10 @@
 #include "../include/antidebug.hpp"
 #include <sys/ptrace.h>
 #include <sys/wait.h>
+#include <sys/prctl.h>
+#include <sys/personality.h>
+#include <sys/stat.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -9,10 +13,277 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <time.h>
+#include <dirent.h>
+#include <errno.h>
 
 namespace Omamori {
 namespace Linux {
 namespace AntiDebug {
+
+// =============================================================================
+// Advanced Techniques - Seccomp Detection
+// =============================================================================
+
+bool Detector::CheckSeccomp() {
+    // Check if seccomp is enabled via /proc/self/status
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return false;
+    
+    char line[256];
+    int seccompMode = 0;
+    
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Seccomp:", 8) == 0) {
+            sscanf(line, "Seccomp: %d", &seccompMode);
+            break;
+        }
+    }
+    
+    fclose(f);
+    
+    // 0 = disabled, 1 = strict, 2 = filter
+    // If seccomp is enabled in filter mode, we might be sandboxed
+    return (seccompMode != 0);
+}
+
+// =============================================================================
+// Advanced Techniques - eBPF Tracing Detection
+// =============================================================================
+
+bool Detector::CheckEBPF() {
+    // Check for eBPF programs attached to our process
+    // This is done by checking /sys/kernel/debug/tracing
+    
+    // Method 1: Check if kprobes are enabled for our process
+    char path[256];
+    snprintf(path, sizeof(path), "/proc/%d/fdinfo", getpid());
+    
+    DIR* dir = opendir(path);
+    if (!dir) return false;
+    
+    struct dirent* entry;
+    bool detected = false;
+    
+    while ((entry = readdir(dir)) != nullptr) {
+        if (entry->d_type == DT_REG || entry->d_type == DT_LNK) {
+            char fdPath[512];
+            snprintf(fdPath, sizeof(fdPath), "%s/%s", path, entry->d_name);
+            
+            FILE* f = fopen(fdPath, "r");
+            if (f) {
+                char buf[1024];
+                while (fgets(buf, sizeof(buf), f)) {
+                    // Look for bpf indicators
+                    if (strstr(buf, "bpf") || strstr(buf, "perf")) {
+                        detected = true;
+                        break;
+                    }
+                }
+                fclose(f);
+            }
+            if (detected) break;
+        }
+    }
+    
+    closedir(dir);
+    
+    // Method 2: Check /sys/kernel/debug/tracing/events
+    if (!detected) {
+        FILE* f = fopen("/sys/kernel/debug/tracing/trace_pipe", "r");
+        if (f) {
+            // If we can open trace_pipe, tracing might be active
+            // Just check if it's accessible (don't actually read)
+            fclose(f);
+            // This alone doesn't mean eBPF, just that tracing is possible
+        }
+    }
+    
+    return detected;
+}
+
+// =============================================================================
+// Advanced Techniques - Namespace Detection
+// =============================================================================
+
+bool Detector::CheckNamespace() {
+    // Check if we're in a non-root namespace (container)
+    
+    // Method 1: Check /proc/1/ns vs our ns
+    char ourNs[256], initNs[256];
+    ssize_t ourLen, initLen;
+    
+    ourLen = readlink("/proc/self/ns/pid", ourNs, sizeof(ourNs) - 1);
+    initLen = readlink("/proc/1/ns/pid", initNs, sizeof(initNs) - 1);
+    
+    if (ourLen > 0 && initLen > 0) {
+        ourNs[ourLen] = '\0';
+        initNs[initLen] = '\0';
+        
+        if (strcmp(ourNs, initNs) != 0) {
+            return true; // Different PID namespace - likely container
+        }
+    }
+    
+    // Method 2: Check cgroup
+    FILE* f = fopen("/proc/self/cgroup", "r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "docker") || strstr(line, "lxc") || 
+                strstr(line, "kubepods") || strstr(line, "containerd")) {
+                fclose(f);
+                return true;
+            }
+        }
+        fclose(f);
+    }
+    
+    // Method 3: Check for /.dockerenv
+    if (access("/.dockerenv", F_OK) == 0) {
+        return true;
+    }
+    
+    return false;
+}
+
+// =============================================================================
+// Advanced Techniques - Memory Breakpoint Detection
+// =============================================================================
+
+bool Detector::CheckMemoryBreakpoints() {
+    // Scan our own executable for INT3 (0xCC) breakpoints
+    
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (!f) return false;
+    
+    char line[512];
+    bool detected = false;
+    
+    while (fgets(line, sizeof(line), f)) {
+        // Look for executable sections
+        if (strstr(line, "r-xp") || strstr(line, "r-x")) {
+            unsigned long start, end;
+            if (sscanf(line, "%lx-%lx", &start, &end) == 2) {
+                // Scan this region for INT3
+                unsigned char* ptr = reinterpret_cast<unsigned char*>(start);
+                size_t size = end - start;
+                
+                size_t runLength = 0;
+                for (size_t i = 0; i < size; i++) {
+                    if (ptr[i] == 0xCC) {
+                        runLength++;
+                    } else {
+                        if (runLength > 0 && runLength <= 2) {
+                            detected = true;
+                            break;
+                        }
+                        runLength = 0;
+                    }
+                }
+                if (!detected && runLength > 0 && runLength <= 2) {
+                    detected = true;
+                }
+                
+                if (detected) break;
+            }
+        }
+    }
+    
+    fclose(f);
+    return detected;
+}
+
+// =============================================================================
+// Advanced Techniques - Personality Check
+// =============================================================================
+
+bool Detector::CheckPersonality() {
+    // Check personality flags for ADDR_NO_RANDOMIZE (disabled ASLR)
+    // Debuggers sometimes disable ASLR for easier debugging
+    
+    int persona = personality(0xffffffff);
+    if (persona == -1) return false;
+    
+    // ADDR_NO_RANDOMIZE = 0x0040000
+    if (persona & 0x0040000) {
+        return true; // ASLR disabled - suspicious
+    }
+    
+    // READ_IMPLIES_EXEC can also be suspicious
+    if (persona & 0x0400000) {
+        return true;
+    }
+    
+    return false;
+}
+
+// =============================================================================
+// Advanced Techniques - Syscall Filter Detection
+// =============================================================================
+
+bool Detector::CheckSyscallFilter() {
+    // Try to detect if syscalls are being filtered/traced
+    
+    // Method 1: Check seccomp status via prctl
+    int result = prctl(PR_GET_SECCOMP, 0, 0, 0, 0);
+    if (result > 0) {
+        return true; // Seccomp is enabled
+    }
+    
+    // Method 2: Check /proc/self/syscall
+    FILE* f = fopen("/proc/self/syscall", "r");
+    if (f) {
+        char buf[64];
+        if (fgets(buf, sizeof(buf), f)) {
+            // If we can read this, check for anomalies
+            // Normal: "running" or syscall number
+        }
+        fclose(f);
+    }
+    
+    return false;
+}
+
+// =============================================================================
+// Advanced Evasion - Disable Core Dumps
+// =============================================================================
+
+bool Detector::DisableCoreDumps() {
+    // Method 1: setrlimit
+    struct rlimit rl;
+    rl.rlim_cur = 0;
+    rl.rlim_max = 0;
+    
+    if (setrlimit(RLIMIT_CORE, &rl) != 0) {
+        return false;
+    }
+    
+    // Method 2: prctl PR_SET_DUMPABLE
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) {
+        return false;
+    }
+    
+    return true;
+}
+
+bool Detector::SetDumpable(bool enable) {
+    return prctl(PR_SET_DUMPABLE, enable ? 1 : 0, 0, 0, 0) == 0;
+}
+
+bool Detector::SetupAntiTrace() {
+    // Comprehensive anti-trace setup
+    
+    // 1. Disable core dumps
+    DisableCoreDumps();
+    
+    // 2. Block ptrace
+    BlockPtraceAdvanced();
+    
+    // 3. Install signal handlers
+    SignalProtection::InstallHandlers();
+    
+    return true;
+}
 
 // ptrace-based checks
 bool Detector::CheckPtraceTraceme() {
@@ -151,8 +422,13 @@ bool Detector::CheckParentProcess() {
     if (!f) return true;
     
     char cmdline[512] = {0};
-    fread(cmdline, 1, sizeof(cmdline) - 1, f);
+    size_t readBytes = fread(cmdline, 1, sizeof(cmdline) - 1, f);
     fclose(f);
+
+    if (readBytes == 0) {
+        return false;
+    }
+    cmdline[readBytes] = '\0';
     
     // Check for debuggers
     return (strstr(cmdline, "gdb") || 
@@ -169,21 +445,27 @@ bool Detector::CheckProcessName() {
     if (!f) return true;
     
     char cmdline[512] = {0};
-    fread(cmdline, 1, sizeof(cmdline) - 1, f);
+    size_t readBytes = fread(cmdline, 1, sizeof(cmdline) - 1, f);
     fclose(f);
+
+    if (readBytes == 0) {
+        return false;
+    }
+    cmdline[readBytes] = '\0';
     
     return false;
 }
 
 // Debugger-specific checks
 bool Detector::CheckGDB() {
-    // GDB sets specific breakpoint instructions
-    // Check for INT3 (0xCC) in code
-    return false; // Simplified
+    // Check for GDB-specific artifacts in environment and parent process
+    // Also delegate to memory breakpoint check
+    return CheckMemoryBreakpoints() || CheckParentProcess();
 }
 
 bool Detector::CheckLLDB() {
-    return false; // Simplified
+    // LLDB detection - similar to GDB but check for lldb-specific strings
+    return CheckParentProcess(); // Parent process check handles this
 }
 
 bool Detector::CheckFrida() {
@@ -226,12 +508,21 @@ bool Detector::IsDebuggerPresent(uint32_t methods) {
     if (methods & SIGNAL_BASED && CheckSignalHandlers()) return true;
     if (methods & GDB_SPECIFIC && CheckGDB()) return true;
     if (methods & FRIDA_DETECTION && CheckFrida()) return true;
+    // Advanced techniques
+    if (methods & SECCOMP_DETECTION && CheckSeccomp()) return true;
+    if (methods & EBPF_DETECTION && CheckEBPF()) return true;
+    if (methods & NAMESPACE_DETECTION && CheckNamespace()) return true;
+    if (methods & MEMORY_BREAKPOINT && CheckMemoryBreakpoints()) return true;
+    if (methods & PERSONALITY_CHECK && CheckPersonality()) return true;
     
     return false;
 }
 
 // Protection functions
 bool Detector::EnableAntiDebug() {
+    // Setup comprehensive anti-trace
+    SetupAntiTrace();
+    
     // Try advanced blocking first, fallback to simple
     if (!BlockPtraceAdvanced()) {
         BlockPtrace();
@@ -276,11 +567,6 @@ bool Detector::BlockPtraceAdvanced() {
     // We don't intercept syscalls, just block external attach
     
     return true;
-}
-
-bool Detector::ObfuscateMemory() {
-    // Implement memory obfuscation techniques
-    return false;
 }
 
 // TimingGuard implementation
