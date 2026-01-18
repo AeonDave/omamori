@@ -26,7 +26,6 @@ A cross-platform protection library implementing advanced anti-debugging, anti-d
   - [Granular Configuration Examples](#granular-configuration-examples)
 - [Excluded Techniques](#excluded-techniques)
 - [API Reference](#api-reference)
-- [Advanced Evasion Techniques](#advanced-evasion-techniques)
 - [Build Instructions](#build-instructions)
 - [Testing](#testing)
 - [Performance](#performance)
@@ -44,7 +43,7 @@ Omamori is a production-ready software protection library designed to defend app
 | Layer | Component | Key features |
 |---:|:---|:---|
 | Layer 4 | Memory Encryption | Transparent on-demand encryption; **ChaCha20-like stream cipher** (20-round core); Page-level protection (PROT_NONE / PAGE_NOACCESS); Automatic SIGSEGV / VEH handler |
-| Layer 3 | Anti-Dump | **25+ Windows / 20+ Linux techniques**; PE/ELF header manipulation; **Rich Header wiping**; **Section encryption**; **Directory wiping**; **Code integrity hashing**; **MADV_DONTDUMP**; **Working set purging**; PEB/LDR unlinking; Continuous re-corruption |
+| Layer 3 | Anti-Dump | **30+ Windows / 15+ Linux techniques**; PE/ELF header manipulation; **Rich Header wiping**; **Section encryption**; **Directory wiping**; **Code integrity hashing**; **MADV_DONTDUMP**; **Working set purging**; PEB/LDR unlinking; Continuous re-corruption |
 | Layer 2 | Anti-Debug | Multi-vector debugger detection & prevention; PEB / TEB inspection (50+ checks); Hardware breakpoint detection (DR0-DR7); ETW Patching; AMSI Bypass; ptrace self-attach (Linux); Framework detection (GDB, Frida, LLDB, x64dbg) |
 | Layer 1 | Anti-Virtualization | VM & container detection; **Hypervisor CPUID Vendor**; **ACPI/SMBIOS Tables**; **Firmware Tables**; MAC address fingerprinting; Container checks (cgroup, /.dockerenv); VM artifacts (VMware, VirtualBox, Hyper-V) |
 | Base | System Integration | **Direct & Indirect syscalls** (Windows); **Halo's Gate** SSN resolution; Compile-time secure string encryption (XOR); Cross-platform abstraction layer |
@@ -68,7 +67,7 @@ Omamori is a production-ready software protection library designed to defend app
 > **Stability First:** All detection methods are selected to avoid false positives.
 > No timing-based detection is used by default.
 
-**Linux (15 techniques):**
+**Linux (16 techniques):**
 
 - CPUID hypervisor bit detection
 - **Hypervisor CPUID Vendor** - reads hypervisor signature (VMwareVMware, KVMKVMKVM, etc.)
@@ -86,7 +85,7 @@ Omamori is a production-ready software protection library designed to defend app
 - systemd-detect-virt integration
 - /proc/modules kernel module scan
 
-**Windows (19 techniques):**
+**Windows (20 techniques):**
 
 - CPUID hypervisor bit detection
 - **Hypervisor CPUID Vendor** - reads VMwareVMware, VBoxVBoxVBox, Microsoft Hv, etc.
@@ -138,12 +137,11 @@ Omamori is a production-ready software protection library designed to defend app
 - **Namespace Detection** - Container/namespace isolation check
 - **Memory Breakpoint Scan** - INT3 detection in executable code
 - **Personality Check** - ADDR_NO_RANDOMIZE (ASLR disabled) detection
-- **Syscall Filter Detection** - Detects syscall tracing/filtering
 - Background monitoring thread with customizable intervals
 
 ### Layer 3: Anti-Dump
 
-**Windows (25+ techniques):**
+**Windows (30+ techniques):**
 
 - PE header erasure/corruption
 - DOS stub invalidation
@@ -164,7 +162,7 @@ Omamori is a production-ready software protection library designed to defend app
 - Continuous re-corruption thread
 - PAGE_NOACCESS / PAGE_GUARD protection
 
-**Linux (20+ techniques):**
+**Linux (15+ techniques):**
 
 - ELF magic bytes corruption
 - ELF header erasure
@@ -192,6 +190,7 @@ Omamori is a production-ready software protection library designed to defend app
 - **ChaCha20-like stream cipher** (20-round core)
 - Automatic decryption on memory access (SIGSEGV/VEH)
 - Per-page unique encryption keys (CryptGenRandom + RDTSC entropy)
+- Automatic re-encryption thread (configurable timeout)
 - Manual re-encryption (call `ProtectAndEncrypt` after access)
 - Zero application code changes
 - Template-based RAII interface
@@ -278,11 +277,13 @@ int main() {
         .WithAntiDebug(true, AntiDebugTechniques::FAST)       // Fast checks only
         .WithAntiDebugThread(true, 500)                       // Check every 500ms
         .WithAntiDump(true, AntiDumpTechniques::STANDARD)     // Standard protection
-        .WithMemoryEncryption(true)                           // Enable encryption
-        .WithTerminateOnDetect(false)                         // Don't auto-terminate
+        .WithMemoryEncryption(true)                           // Enable encryption layer
         .WithCallback([](const char* layer, const char* tech) {
             std::cerr << "Security: " << layer << "/" << tech << std::endl;
         });
+
+    // Auto-init memory encryption if desired
+    config.memory_auto_init = true;
     
     // Initialize with custom config
     Omamori::Initialize(config);
@@ -355,10 +356,12 @@ struct ProtectionConfig {
     // Layer 3: Anti-Dump
     bool enable_antidump = true;
     uint32_t antidump_techniques = AntiDumpTechniques::ALL;
+    bool antidump_continuous = false;
     
     // Layer 4: Memory Encryption
     bool enable_memory_encryption = false;
     uint32_t memory_encryption_techniques = MemoryEncryptionTechniques::ALL;
+    bool memory_auto_init = false;
     
     // Callback for custom detection handling
     void (*on_detection)(const char* layer, const char* technique) = nullptr;
@@ -524,8 +527,7 @@ auto config = Omamori::ProtectionConfig()
     .WithAntiDebugThread(true, 200)                          // Background thread
     .WithAntiDump(true, AntiDumpTechniques::STANDARD)       // Layer 3
     .WithMemoryEncryption(false)                             // Layer 4
-    .WithCallback(myDetectionHandler)                        // Custom handler
-    .WithTerminateOnDetect(false);                          // Don't auto-terminate
+    .WithCallback(myDetectionHandler);                       // Custom handler
 
 Omamori::Initialize(config);
 ```
@@ -640,8 +642,7 @@ void MyDetectionHandler(const char* layer, const char* technique) {
 int main() {
     auto config = Omamori::ProtectionConfig()
         .WithAntiDebug(true, AntiDebugTechniques::ALL)
-        .WithCallback(MyDetectionHandler)
-        .WithTerminateOnDetect(false);  // We handle it ourselves
+        .WithCallback(MyDetectionHandler);  // Callback disables auto-terminate
     
     Omamori::Initialize(config);
 }
@@ -693,7 +694,7 @@ auto config = Omamori::ProtectionConfig()
 Omamori::Initialize(config);
 
 // Store license key encrypted
-OMAMORI_ENCRYPTED_BUFFER(license, char, 256);
+ENCRYPTED_ARRAY(char, license, 256);
 ```
 
 **Use Case 3: Banking / Finance Application**
@@ -716,8 +717,7 @@ auto config = Omamori::ProtectionConfig()
     .WithAntiDebugThread(false)
     .WithCallback([](const char* l, const char* t) {
         syslog(LOG_WARNING, "Security: %s/%s", l, t);
-    })
-    .WithTerminateOnDetect(false);
+    });
 ```
 
 **Use Case 5: Stealth Protection**
@@ -811,14 +811,7 @@ g++ -std=c++17 -DOMAMORI_PLATFORM_LINUX -I../include -I../common/include \
 
 ### Other Examples
 
-| File | Platform | Description |
-|:-----|:---------|:------------|
-| [windows_example.cpp](examples/windows_example.cpp) | Windows | Full Windows protection demo |
-| [linux_example.cpp](examples/linux_example.cpp) | Linux | Full Linux protection demo |
-| [test_memory_encryption.cpp](examples/test_memory_encryption.cpp) | Cross-platform | Memory encryption (ChaCha20) demo |
-| [example_license_protection.cpp](examples/example_license_protection.cpp) | Cross-platform | License protection use case |
-| [verify_antidump.cpp](examples/verify_antidump.cpp) | Cross-platform | Anti-dump verification |
-| [anti_attach_test.cpp](examples/anti_attach_test.cpp) | Cross-platform | Anti-attach protection test |
+Other examples include: [windows_example.cpp](examples/windows_example.cpp), [linux_example.cpp](examples/linux_example.cpp), [test_memory_encryption.cpp](examples/test_memory_encryption.cpp), [example_license_protection.cpp](examples/example_license_protection.cpp), [verify_antidump.cpp](examples/verify_antidump.cpp), [anti_attach_test.cpp](examples/anti_attach_test.cpp).
 
 ---
 
@@ -986,83 +979,7 @@ Features:
 - Compile-time obfuscation
 - Automatic memory wiping on destruction
 
-### Anti-Debug API
-
-#### Windows Anti-Debug
-
-```cpp
-namespace Omamori::Windows::AntiDebug::Detector {
-    // PEB-based detection
-    bool CheckPEBBeingDebugged();       // BeingDebugged flag
-    bool CheckPEBNtGlobalFlag();        // NtGlobalFlag analysis
-    bool CheckPEBHeapFlags();           // Heap flags inspection
-  
-    // Hardware breakpoint detection
-    bool CheckHardwareBreakpoints();    // DR0-DR7 registers
-    void ClearHardwareBreakpoints();    // Clear all hardware BP
-  
-    // Timing-based detection
-    bool CheckTimingRDTSC();            // RDTSC instruction timing
-    bool CheckTimingQueryPerformanceCounter();  // QPC timing
-  
-    // API-based detection
-    bool CheckRemoteDebugger();         // CheckRemoteDebuggerPresent
-    bool CheckDebugPort();              // NtQueryInformationProcess
-    bool CheckDebugFlags();             // ProcessDebugFlags
-    bool CheckDebugObject();            // ProcessDebugObjectHandle
-  
-    // Exception-based detection
-    bool CheckCloseHandleException();   // Invalid handle exception
-    bool CheckOutputDebugString();      // OutputDebugString behavior
-  
-    // System checks
-    bool CheckKernelDebugger();         // Kernel debugger presence
-    bool CheckParentProcess();          // Parent process analysis
-  
-    // Thread protection
-    void HideThreadFromDebugger();      // Hide current thread
-  
-    // Comprehensive check
-    bool IsDebugged();                  // All techniques combined
-}
-```
-
-#### Linux Anti-Debug
-
-```cpp
-namespace Omamori::Linux::AntiDebug::Detector {
-    // ptrace-based detection
-    bool CheckPtraceTraceme();          // PTRACE_TRACEME test
-    bool CheckPtraceAttach();           // Fork + attach test
-    bool BlockPtrace();                 // Block external ptrace
-    bool BlockPtraceAdvanced();         // Self-attach protection
-  
-    // /proc filesystem checks
-    bool CheckProcStatusTracerPid();    // TracerPid monitoring
-    bool CheckProcMaps();               // Memory maps analysis
-  
-    // Environment checks
-    bool CheckLdPreload();              // LD_PRELOAD detection
-    bool CheckDebugEnvironment();       // Debug env variables
-  
-    // Timing analysis
-    bool CheckTiming();                 // Clock timing anomalies
-  
-    // Process analysis
-    bool CheckParentProcess();          // Parent process name
-    bool CheckParentCmdline();          // Parent command line
-  
-    // Framework detection
-    bool CheckFrida();                  // Frida artifacts
-    bool CheckGDB();                    // GDB presence
-    bool CheckLLDB();                   // LLDB presence
-  
-    // Comprehensive check
-    bool IsDebugged();                  // All techniques combined
-}
-```
-
-#### Timing Guard (RAII)
+### Anti-Debug API (Core)
 
 ```cpp
 // Automatic timing verification
@@ -1110,133 +1027,9 @@ Omamori::AntiDebug::ProtectionThread::SetCallback([]() {
 Omamori::AntiDebug::ProtectionThread::Stop();
 ```
 
-### Anti-Dump API
+### Anti-Dump / Anti-VM API (Reference)
 
-#### Windows Anti-Dump
-
-```cpp
-namespace Omamori::Windows::AntiDump::Protection {
-    // PE header manipulation
-    void CorruptPEHeader();             // Corrupt PE header
-    void EraseDOSHeader();              // Erase DOS header
-    void ErasePEHeader();               // Erase PE header completely
-  
-    // Memory protection
-    void ProtectHeaderMemory();         // Set PAGE_NOACCESS
-    void InstallVEHProtection();        // VEH exception handler
-  
-    // PEB manipulation
-    void UnlinkFromPEB();               // Unlink from module list
-  
-    // Continuous protection
-    void StartContinuousProtection(unsigned int intervalMs);
-    void StopContinuousProtection();
-}
-```
-
-#### Linux Anti-Dump
-
-```cpp
-namespace Omamori::Linux::AntiDump::Protection {
-    // ELF manipulation
-    void CorruptELFHeader();            // Corrupt ELF header
-    void EraseSectionHeaders();         // Erase section headers
-  
-    // Memory protection
-    void ProtectMemory();               // mprotect headers
-  
-    // Core dump prevention
-    void DisableCoreDumps();            // setrlimit + prctl
-    void SetPrctlProtections();         // Additional prctl flags
-  
-    // Obfuscation
-    void ObfuscateProcMaps();           // Hide from /proc/self/maps
-  
-    // Comprehensive protection
-    void AntiDumpTechniques();          // Apply all techniques
-}
-```
-
-### Anti-VM API
-
-#### Linux Anti-VM
-
-```cpp
-namespace Omamori::Linux::AntiVM::Detector {
-    // Detection methods
-    bool CheckCPUID();                  // Hypervisor CPUID bit
-    bool CheckDMI();                    // DMI/SMBIOS strings
-    bool CheckMACAddress();             // VM MAC prefixes
-  
-    // Specific VM detection
-    bool CheckVMware();                 // VMware artifacts
-    bool CheckVirtualBox();             // VirtualBox artifacts
-    bool CheckKVM();                    // KVM detection
-    bool CheckQEMU();                   // QEMU detection
-  
-    // Container detection
-    bool CheckDocker();                 // Docker environment
-    bool IsContainerized();             // Generic container check
-  
-    // System tools
-    bool CheckSystemdDetectVirt();      // systemd-detect-virt
-  
-    // Comprehensive checks
-    bool IsVirtualMachine();            // All VM checks
-    const char* GetVMType();            // Get detected VM type
-  
-    // Actions
-    void TerminateIfVM();               // Exit if VM detected
-}
-```
-
-#### Windows Anti-VM
-
-```cpp
-namespace Omamori::Windows::AntiVM::Detector {
-    // Detection methods
-    bool CheckCPUID();                  // Hypervisor CPUID bit
-    bool CheckRegistry();               // Registry artifacts
-    bool CheckMACAddress();             // VM MAC prefixes
-  
-    // Specific VM detection
-    bool CheckVMware();                 // VMware artifacts
-    bool CheckVirtualBox();             // VirtualBox artifacts
-    bool CheckHyperV();                 // Hyper-V detection
-    bool CheckQEMU();                   // QEMU detection
-  
-    // System checks
-    bool CheckProcesses();              // VM processes
-    bool CheckServices();               // VM services
-    bool CheckFiles();                  // VM files
-    bool CheckDevices();                // VM devices
-  
-    // Firmware checks
-    bool CheckSMBIOS();                 // SMBIOS strings
-    bool CheckWMI();                    // WMI queries
-  
-    // Comprehensive checks
-    bool IsVirtualMachine();            // All VM checks
-    const char* GetVMType();            // Get detected VM type
-  
-    // Actions
-    void TerminateIfVM();               // Exit if VM detected
-}
-```
-
-Example:
-
-```cpp
-#ifdef __linux__
-if (Omamori::Linux::AntiVM::Detector::IsVirtualMachine()) {
-    const char* vmType = Omamori::Linux::AntiVM::Detector::GetVMType();
-    std::cout << "Detected VM: " << vmType << std::endl;
-  
-    // Optionally terminate
-    Omamori::Linux::AntiVM::Detector::TerminateIfVM();
-}
-#endif
-```
+Full API surface is available in headers under [windows/include](windows/include) and [linux/include](linux/include). For most use cases, prefer the high-level API (`Initialize`, `IsDebugged`, `IsInVM`) and technique bitmasks.
 
 ### Memory Encryption Layer
 
@@ -1267,7 +1060,7 @@ namespace Omamori::MemoryEncryption {
         void SetDecryptTimeout(uint32_t ms);      // Default: 100ms
       
         // Statistics
-        EncryptionStats GetStats();
+        Stats GetStats() const;
     };
 }
 ```
@@ -1415,66 +1208,6 @@ if (NT_SUCCESS(status) && debugPort != 0) {
     // Debugger detected
 }
 #endif
-```
-
-### Advanced Evasion Techniques
-
-Omamori implements several advanced techniques to evade modern security solutions:
-
-#### Halo's Gate (SSN Resolution)
-
-When EDR/AV solutions hook ntdll.dll functions, the normal syscall number (SSN) extraction fails. Halo's Gate resolves this by:
-
-1. **Detecting hooks** - Checking for JMP instructions at function entry
-2. **Neighbor scanning** - Walking to adjacent unhooked functions to calculate SSN
-3. **SSN derivation** - Computing the target SSN from neighbor's SSN ± offset
-
-```cpp
-// Automatic SSN resolution even when hooked
-DWORD ssn = Omamori::Windows::Syscall::HalosGate::ResolveSyscallNumber("NtQueryInformationProcess");
-// ssn is valid even if NtQueryInformationProcess is hooked by EDR
-```
-
-#### Indirect Syscalls
-
-Direct syscalls leave a suspicious call stack (syscall from non-ntdll module). Indirect syscalls fix this by:
-
-1. **Finding clean addresses** - Locating `syscall; ret` gadgets in ntdll.dll
-2. **JMP-based execution** - Jumping to ntdll's syscall instruction instead of executing inline
-3. **Clean call stack** - Return address points to ntdll.dll, evading EDR detection
-
-```cpp
-// Indirect syscall with clean call stack
-auto stub = Omamori::Windows::Syscall::StubManager::CreateIndirectStub("NtQueryInformationProcess");
-// Call stack shows return to ntdll.dll, not your module
-```
-
-#### ChaCha20 Memory Encryption
-
-- **20-round keystream** - Full ChaCha20 quarter-round mixing
-- **256-bit keys** - CryptGenRandom with RDTSC entropy fallback
-- **Per-page nonces** - Unique encryption per memory page
-- **Constant-time** - Resistant to timing side-channels
-
-```cpp
-// Secure memory encryption
-Omamori::EncryptedBuffer<char> apiKey(256);
-// Data encrypted with ChaCha20 when not in use
-```
-
-#### Sleep Acceleration Detection
-
-Sandbox environments often accelerate sleep calls to speed up analysis:
-
-- **Timing verification** - Measures actual elapsed time vs requested sleep
-- **Threshold detection** - Flags if 500ms sleep completes in <400ms
-- **Combined with CPUID timing** - Multi-vector sandbox detection
-
-```cpp
-// Detect sandbox fast-forwarding
-if (Omamori::AntiVM::CheckTimingAnomaly()) {
-    // Sleep acceleration or VM detected
-}
 ```
 
 ---
@@ -1677,54 +1410,10 @@ The test suites validate:
 
 | Platform | Tests | Passed | Failed | Success Rate |
 |----------|-------|--------|--------|-------------|
-| Windows (MinGW) | 59 | 59 | 0 | **100%** ✅ |
-| Linux (GCC) | 49 | 49 | 0 | **100%** ✅ |
+| Windows (MinGW) | 94 | 94 | 0 | **100%** ✅ |
+| Linux (GCC) | 77 | 77 | 0 | **100%** ✅ |
 
 Expected output shows PASS/FAIL for each technique with details.
-
-### Manual Testing
-
-**Linux - Anti-Debug:**
-
-```bash
-# Should detect and terminate
-gdb ./omamori_example_linux
-
-# Should detect ptrace
-strace ./omamori_example_linux
-```
-
-**Linux - Anti-Dump:**
-
-```bash
-# Core dump should be prevented
-./omamori_example_linux &
-gcore $(pidof omamori_example_linux)
-```
-
-**Linux - Anti-VM:**
-
-```bash
-# Run in VM - should detect virtualization
-./omamori_antivm_test_linux
-```
-
-**Windows - Anti-Debug:**
-
-```bash
-# Should detect and terminate
-x64dbg omamori_example_windows.exe
-windbg omamori_example_windows.exe
-```
-
-**Windows - Anti-VM:**
-
-```bash
-# Run in VM - should detect virtualization
-omamori_antivm_test_windows.exe
-```
-
----
 
 ### License Protection Example
 
